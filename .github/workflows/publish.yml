@@ -1,0 +1,76 @@
+name: Publish package to Maven Central and Github Packages
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get version from tag (strip 'v')
+        id: tag
+        run: |
+          RAW_TAG="${{ github.event.release.tag_name }}"
+          VERSION="${RAW_TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validate version format (X.Y.Z)
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Write settings.xml for Central
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <settings>
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${{ secrets.MAVEN_CENTRAL_USERNAME }}</username>
+                <password>${{ secrets.MAVEN_CENTRAL_PASSWORD }}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Update version locally in pom.xml
+        run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
+
+      - name: Publish to Maven Central
+        run: mvn --batch-mode deploy -P maven-central
+        env:
+          GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+
+      - name: Set up Java for GitHub Packages
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Publish to GitHub Packages
+        run: mvn --batch-mode deploy -P github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
