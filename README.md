@@ -2,7 +2,7 @@
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.spicelabs/ginger-j?label=Maven%20Central)](https://central.sonatype.com/artifact/io.spicelabs/ginger-j)
 [![GitHub Release](https://img.shields.io/github/v/release/spice-labs-inc/ginger-j?label=GitHub%20Release)](https://github.com/spice-labs-inc/ginger-j/releases)
-[![GitHub Package](https://img.shields.io/badge/GitHub-Packages-blue?logo=github)](https://github.com/spice-labs-inc/ginger-j/pkgs/container/ginger-j)
+[![GitHub Package](https://img.shields.io/badge/GitHub-Packages-blue?logo=github)](https://github.com/spice-labs-inc/ginger-j/packages/)
 
 **Ginger-j** is a lightweight Java library and CLI for encrypting and uploading structured data to the Spice Labs platform.
 
