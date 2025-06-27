@@ -4,10 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                              http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+    <name>Ginger Java Client</name>
+    <description>Spice Labs Client for encryption and uploading</description>
+
 
     <groupId>io.spicelabs</groupId>
     <artifactId>ginger-j</artifactId>
-    <version>1.0</version>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>jar</packaging>
     <url>https://github.com/spice-labs-inc/ginger-j</url>
 
     <organization>
@@ -38,16 +42,67 @@
         </developer>
     </developers>
 
+    <profiles>
+        <profile>
+            <id>github</id>
+            <distributionManagement>
+                <repository>
+                    <id>github</id>
+                    <name>GitHub Packages</name>
+                    <url>https://maven.pkg.github.com/spice-labs-inc/ginger-j</url>
+                </repository>
+            </distributionManagement>
+        </profile>
+
+        <profile>
+            <id>maven-central</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.8.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>false</autoPublish>
+                            <checksums>all</checksums>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <gpgArguments>
+                                <arg>--pinentry-mode</arg>
+                                <arg>loopback</arg>
+                            </gpgArguments>
+                            <passphrase>${env.GPG_PASSPHRASE}</passphrase>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <properties>
-        <!-- compiler -->
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
-
-        <!-- encoding -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- plugin versions -->
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
 
         <!-- dependency versions -->
         <slf4j.version>2.0.17</slf4j.version>
@@ -59,7 +114,6 @@
         <junit.jupiter.version>5.13.1</junit.jupiter.version>
         <mockwebserver.version>4.12.0</mockwebserver.version>
         <mockito.version>5.3.1</mockito.version>
-        <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
     </properties>
 
     <build>
@@ -83,8 +137,36 @@
                     <argLine>-Xshare:off -XX:+EnableDynamicAgentLoading</argLine>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                    <id>attach-sources</id>
+                    <goals>
+                        <goal>jar</goal>
+                    </goals>
+                    </execution>
+                </executions>
+                </plugin>
+
+                <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.2</version>
+                <executions>
+                    <execution>
+                    <id>attach-javadocs</id>
+                    <goals>
+                        <goal>jar</goal>
+                    </goals>
+                    </execution>
+                </executions>
+                </plugin>
         </plugins>
     </build>
+
     <dependencies>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -116,6 +198,7 @@
             <artifactId>jackson-core</artifactId>
             <version>${jackson.version}</version>
         </dependency>
+
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -135,6 +218,7 @@
             <version>${junit.jupiter.version}</version>
             <scope>test</scope>
         </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
@@ -142,7 +226,6 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- mock server -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>mockwebserver</artifactId>
