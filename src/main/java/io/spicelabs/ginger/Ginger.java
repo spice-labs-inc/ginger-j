@@ -83,6 +83,10 @@ public class Ginger implements Callable<Integer> {
   @Option(names = {"--comment-no-sensitive-info"}, description = "Non-sensitive comment")
   private String comment;
 
+  @Option(names = "--output", description = "Directory to write encrypted zip")
+  private Path outputDir;
+
+
   //── Java-first fluent API ──────────────────────────────────────────────────────
 
   public static Ginger builder() { return new Ginger(); }
@@ -92,6 +96,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
   public Ginger comment(String c) { this.comment = c; return this; }
+  public Ginger outputDir(Path d) { this.outputDir = d; return this; }
 
   /**
    * Perform the work—encrypt (and optionally upload).
@@ -119,16 +124,16 @@ public class Ginger implements Callable<Integer> {
 
     // Stream or tar payload
     var stream = PayloadStreamer.stream(payload);
-    Path outDir = null;
-    if (encryptOnly) {
-      Path parent = payload.getParent();
-      if (parent != null && Files.isWritable(parent)) {
-        outDir = parent;
-      } else {
-        outDir = Files.createTempDirectory("ginger-out");
-        log.warn("Output dir fallback: using {}", outDir);
-      }
+    Path outDir = (outputDir != null)
+        ? outputDir
+        : payload.getParent();
+
+    if (outDir == null || !Files.isWritable(outDir)) {
+      outDir = Files.createTempDirectory("ginger-out");
+      log.warn("Output dir fallback: using {}", outDir);
     }
+
+
 
 
     File bundle = ZipBuilder.build(

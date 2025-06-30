@@ -15,9 +15,12 @@ limitations under the License. */
 
 package io.spicelabs.ginger;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -27,7 +30,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class ZipBuilder {
-  // ZIP entry names
   private static final String ENTRY_UUID = "uuid.txt";
   private static final String ENTRY_DATE = "bundle_date.txt";
   private static final String ENTRY_CONTAINER = "payload_container_type.txt";
@@ -38,15 +40,12 @@ public class ZipBuilder {
   private static final String ENTRY_IV = "iv.txt";
   private static final String ENTRY_MIME = "mime.txt";
   private static final String ENTRY_PAYLOAD = "payload.enc";
+  private static final String ENTRY_TEST = "test.txt";
 
-  // Container types
   private static final String TYPE_TAR = "tar";
   private static final String TYPE_FILE = "file";
 
-  // Bundle version
   private static final byte[] BUNDLE_VERSION = "1".getBytes();
-
-  // File naming
   private static final String ZIP_EXTENSION = ".zip";
   private static final String PROP_TMPDIR = "java.io.tmpdir";
 
@@ -88,9 +87,26 @@ public class ZipBuilder {
 
       writeEntry(zos, ENTRY_PUBKEY, pubKeyPem.getBytes());
 
+      // === test.txt logic ===
+      byte[] testIv = CryptoUtil.generateIv();
+      byte[] testPlain = CryptoUtil.randomBytes(128);
+      ByteArrayOutputStream encryptedTest = new ByteArrayOutputStream();
+
+      if (payloadStream == null) throw new IllegalArgumentException("Payload stream is null");
+
+      CryptoUtil.aesGcmEncrypt(aesKey, testIv, new ByteArrayInputStream(testPlain), encryptedTest);
+
+      String testEntry = String.join(
+          "\n",
+          Base64.getEncoder().encodeToString(testIv),
+          Base64.getEncoder().encodeToString(testPlain),
+          Base64.getEncoder().encodeToString(encryptedTest.toByteArray())
+      );
+      writeEntry(zos, ENTRY_TEST, testEntry.getBytes(StandardCharsets.UTF_8));
+      // === end test.txt logic ===
+
       byte[] iv = CryptoUtil.generateIv();
       writeEntry(zos, ENTRY_IV, Base64.getEncoder().encode(iv));
-
       writeEntry(zos, ENTRY_MIME, mimeType.getBytes());
 
       zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
