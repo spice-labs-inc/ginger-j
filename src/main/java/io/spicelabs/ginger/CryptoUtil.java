@@ -17,12 +17,15 @@ package io.spicelabs.ginger;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
@@ -47,12 +50,20 @@ public class CryptoUtil {
     String b64 = pem.replace(RSA_HEADER, "")
         .replace(RSA_FOOTER, "")
         .replaceAll("\\s", "");
-    
+
     byte[] keyBytes = Base64.getDecoder().decode(b64);
     X509EncodedKeySpec spec = new X509EncodedKeySpec(keyBytes);
     PublicKey pub = KeyFactory.getInstance("RSA").generatePublic(spec);
+
+    OAEPParameterSpec oaepParams = new OAEPParameterSpec(
+        "SHA-256",
+        "MGF1",
+        MGF1ParameterSpec.SHA256,
+        PSource.PSpecified.DEFAULT // Equivalent to Go’s `label = nil`
+    );
+
     Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
-    rsa.init(Cipher.ENCRYPT_MODE, pub);
+    rsa.init(Cipher.ENCRYPT_MODE, pub, oaepParams);
     return rsa.doFinal(data);
   }
 
@@ -71,5 +82,11 @@ public class CryptoUtil {
     }
     enc = cipher.doFinal();
     if (enc != null) out.write(enc);
+  }
+
+  public static byte[] randomBytes(int length) throws Exception {
+    byte[] bytes = new byte[length];
+    java.security.SecureRandom.getInstanceStrong().nextBytes(bytes);
+    return bytes;
   }
 }
