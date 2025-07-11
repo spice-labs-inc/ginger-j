@@ -17,12 +17,12 @@ package io.spicelabs.ginger;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
@@ -32,8 +32,13 @@ public class PayloadStreamer {
     if (Files.isDirectory(payload)) {
       PipedOutputStream pos = new PipedOutputStream();
       PipedInputStream pis = new PipedInputStream(pos, 64 * 1024); // 64 KB buffer
+
+      // shared container to hold error
+      final Throwable[] error = new Throwable[1];
+
       Thread thread = new Thread(() -> {
         try (TarArchiveOutputStream taos = new TarArchiveOutputStream(pos)) {
+          taos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
           try (Stream<Path> stream = Files.walk(payload)) {
             stream.filter(Files::isRegularFile)
                 .forEach(p -> {
@@ -43,21 +48,57 @@ public class PayloadStreamer {
                     taos.putArchiveEntry(entry);
                     Files.copy(p, taos);
                     taos.closeArchiveEntry();
-                  } catch (IOException e) {
-                    throw new UncheckedIOException(e);
+                  } catch (Throwable e) {
+                    error[0] = e;
+                    throw new RuntimeException(e); // kill the stream
                   }
                 });
           }
           taos.finish();
-        } catch (IOException e) {
-          throw new UncheckedIOException(e);
+        } catch (Throwable e) {
+          error[0] = e;
+        } finally {
+          try {
+            pos.close();
+          } catch (IOException ignored) {}
         }
       });
 
       thread.start();
-      return pis;
+
+      return new InputStream() {
+        @Override
+        public int read() throws IOException {
+          int r = pis.read();
+          if (r == -1 && error[0] != null) {
+            throw new PayloadStreamerException(error[0]);
+          }
+          return r;
+        }
+
+        @Override
+        public int read(@NotNull byte[] b, int off, int len) throws IOException {
+          int r = pis.read(b, off, len);
+          if (r == -1 && error[0] != null) {
+            throw new PayloadStreamerException(error[0]);
+          }
+          return r;
+        }
+
+        @Override
+        public void close() throws IOException {
+          pis.close();
+        }
+      };
     } else {
       return Files.newInputStream(payload);
     }
   }
+
+  public static class PayloadStreamerException extends RuntimeException {
+    public PayloadStreamerException(Throwable cause) {
+      super(cause);
+    }
+  }
+
 }
