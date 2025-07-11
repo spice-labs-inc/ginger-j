@@ -1,11 +1,13 @@
 package io.spicelabs.ginger;
 
+import io.spicelabs.ginger.PayloadStreamer.PayloadStreamerException;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -37,4 +39,33 @@ class PayloadStreamerTest {
       assertTrue(saw);
     }
   }
+
+  @Test
+  void dirStream_withLongFilename_doesNotThrow(@TempDir Path tempDir) throws Exception {
+    Path d = tempDir.resolve("longpath");
+    Files.createDirectories(d);
+
+    // filename > 100 bytes
+    String longFileName = "a".repeat(101);
+    Path longFile = d.resolve(longFileName);
+    Files.writeString(longFile, "oops");
+
+    try (InputStream in = PayloadStreamer.stream(d);
+         TarArchiveInputStream tais = new TarArchiveInputStream(in)) {
+
+      boolean found = false;
+      TarArchiveEntry entry;
+      while ((entry = tais.getNextEntry()) != null) {
+        if (entry.getName().equals(longFileName)) {
+          found = true;
+          break;
+        }
+      }
+      assertTrue(found, "Expected long filename entry in tar stream");
+    } catch (Exception e) {
+      fail("Expected no exception, but got: " + e);
+    }
+  }
+
+
 }
