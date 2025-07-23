@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.util.stream.Stream;
 
 public class PayloadStreamer {
+  public static final String GINGER_OUTPUT_DIR = "ginger-output";
   public static InputStream stream(Path payload) throws IOException {
     if (Files.isDirectory(payload)) {
       PipedOutputStream pos = new PipedOutputStream();
@@ -40,7 +41,9 @@ public class PayloadStreamer {
         try (TarArchiveOutputStream taos = new TarArchiveOutputStream(pos)) {
           taos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
           try (Stream<Path> stream = Files.walk(payload)) {
-            stream.filter(Files::isRegularFile)
+            stream
+                .filter(Files::isRegularFile)
+                .filter(p -> !p.startsWith(payload.resolve(GINGER_OUTPUT_DIR)))
                 .forEach(p -> {
                   try {
                     String entryName = payload.relativize(p).toString();
