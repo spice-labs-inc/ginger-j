@@ -33,8 +33,8 @@ public class PayloadStreamer {
       PipedOutputStream pos = new PipedOutputStream();
       PipedInputStream pis = new PipedInputStream(pos, 64 * 1024); // 64 KB buffer
 
-      // shared container to hold error
       final Throwable[] error = new Throwable[1];
+      final Thread[] threadRef = new Thread[1];
 
       Thread thread = new Thread(() -> {
         try (TarArchiveOutputStream taos = new TarArchiveOutputStream(pos)) {
@@ -44,13 +44,14 @@ public class PayloadStreamer {
                 .forEach(p -> {
                   try {
                     String entryName = payload.relativize(p).toString();
-                    TarArchiveEntry entry = new TarArchiveEntry(p.toFile(), entryName);
+                    TarArchiveEntry entry = new TarArchiveEntry(entryName);
+                    entry.setSize(Files.size(p));
                     taos.putArchiveEntry(entry);
                     Files.copy(p, taos);
                     taos.closeArchiveEntry();
                   } catch (Throwable e) {
                     error[0] = e;
-                    throw new RuntimeException(e); // kill the stream
+                    throw new RuntimeException(e); // terminate stream
                   }
                 });
           }
@@ -60,34 +61,41 @@ public class PayloadStreamer {
         } finally {
           try {
             pos.close();
-          } catch (IOException ignored) {}
+          } catch (IOException ignored) {
+          }
         }
       });
 
+      threadRef[0] = thread;
       thread.start();
 
       return new InputStream() {
         @Override
         public int read() throws IOException {
           int r = pis.read();
-          if (r == -1 && error[0] != null) {
+          if (r == -1 && error[0] != null)
             throw new PayloadStreamerException(error[0]);
-          }
           return r;
         }
 
         @Override
         public int read(@NotNull byte[] b, int off, int len) throws IOException {
           int r = pis.read(b, off, len);
-          if (r == -1 && error[0] != null) {
+          if (r == -1 && error[0] != null)
             throw new PayloadStreamerException(error[0]);
-          }
           return r;
         }
 
         @Override
         public void close() throws IOException {
+          try {
+            threadRef[0].join(); // wait for stream thread to finish
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
           pis.close();
+          if (error[0] != null)
+            throw new PayloadStreamerException(error[0]);
         }
       };
     } else {
