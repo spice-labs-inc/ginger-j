@@ -20,10 +20,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.zip.ZipEntry;
@@ -58,8 +60,10 @@ public class ZipBuilder {
                            Path outputDir) throws Exception {
 
     Path dir = (outputDir != null)
-        ? outputDir
-        : Paths.get(System.getProperty(PROP_TMPDIR));
+      ? outputDir.resolve(PayloadStreamer.GINGER_OUTPUT_DIR)
+      : Paths.get(System.getProperty(PROP_TMPDIR), PayloadStreamer.GINGER_OUTPUT_DIR);
+
+    Files.createDirectories(dir);
 
     String fileName = String.format("%s-%d%s",
         uuid,
@@ -114,6 +118,8 @@ public class ZipBuilder {
       zos.closeEntry();
     }
 
+    //make sure all data is written to disk
+    FileChannel.open(zip, StandardOpenOption.WRITE).force(true);
     return zip.toFile();
   }
 
