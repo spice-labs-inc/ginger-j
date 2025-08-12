@@ -51,6 +51,7 @@ If using GitHub Packages (only needed if not yet in Maven Central):
 You can run directly with Maven:
 
 ```bash
+mvn clean compile
 mvn exec:java -Dexec.mainClass=io.spicelabs.ginger.Ginger \
   -Dexec.args="--jwt path/to/spice-pass.jwt --adg path/to/adg-directory"
 ```
@@ -58,6 +59,7 @@ mvn exec:java -Dexec.mainClass=io.spicelabs.ginger.Ginger \
 Or for deployment events:
 
 ```bash
+mvn clean compile
 mvn exec:java -Dexec.mainClass=io.spicelabs.ginger.Ginger \
   -Dexec.args="--jwt path/to/spice-pass.jwt --deployment-events events.json"
 ```
