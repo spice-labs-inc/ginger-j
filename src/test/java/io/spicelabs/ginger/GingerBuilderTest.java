@@ -1,7 +1,6 @@
 package io.spicelabs.ginger;
 
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.io.File;
 import java.io.IOException;

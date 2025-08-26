@@ -28,6 +28,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Optional;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -51,29 +52,28 @@ public class ZipBuilder {
   private static final String ZIP_EXTENSION = ".zip";
   private static final String PROP_TMPDIR = "java.io.tmpdir";
 
-  public static File build(String uuid,
-                           String pubKeyPem,
-                           InputStream payloadStream,
-                           boolean payloadIsTar,
-                           String mimeType,
-                           String comment,
-                           Path outputDir) throws Exception {
+  public static File build(Optional<String> uuid,
+      Optional<String> pubKeyPem,
+      InputStream payloadStream,
+      boolean payloadIsTar,
+      String mimeType,
+      String comment,
+      Path outputDir) throws Exception {
 
     Path dir = (outputDir != null)
-      ? outputDir.resolve(PayloadStreamer.GINGER_OUTPUT_DIR)
-      : Paths.get(System.getProperty(PROP_TMPDIR), PayloadStreamer.GINGER_OUTPUT_DIR);
+        ? outputDir.resolve(PayloadStreamer.GINGER_OUTPUT_DIR)
+        : Paths.get(System.getProperty(PROP_TMPDIR), PayloadStreamer.GINGER_OUTPUT_DIR);
 
     Files.createDirectories(dir);
 
     String fileName = String.format("%s-%d%s",
-        uuid,
+        uuid.orElse("plaintext_upload"),
         Instant.now().toEpochMilli(),
-        ZIP_EXTENSION
-    );
+        ZIP_EXTENSION);
     Path zip = dir.resolve(fileName);
 
     try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
-      writeEntry(zos, ENTRY_UUID, uuid.getBytes());
+      writeEntry(zos, ENTRY_UUID, uuid.orElse("plaintext_upload").getBytes());
       writeEntry(zos, ENTRY_DATE, Instant.now().toString().getBytes());
 
       String containerType = payloadIsTar ? TYPE_TAR : TYPE_FILE;
@@ -85,40 +85,55 @@ public class ZipBuilder {
 
       writeEntry(zos, ENTRY_VERSION, BUNDLE_VERSION);
 
-      byte[] aesKey = CryptoUtil.generateAesKey();
-      byte[] encKey = CryptoUtil.encryptWithRsa(pubKeyPem, aesKey);
-      writeEntry(zos, ENTRY_KEY, Base64.getEncoder().encode(encKey));
+      byte[] aesKey = null;
+      byte[] iv = null;
+      if (pubKeyPem.isPresent()) {
+        aesKey = CryptoUtil.generateAesKey();
+        byte[] encKey = CryptoUtil.encryptWithRsa(pubKeyPem.get(), aesKey);
+        writeEntry(zos, ENTRY_KEY, Base64.getEncoder().encode(encKey));
 
-      writeEntry(zos, ENTRY_PUBKEY, pubKeyPem.getBytes());
+        writeEntry(zos, ENTRY_PUBKEY, pubKeyPem.get().getBytes());
 
-      // === test.txt logic ===
-      byte[] testIv = CryptoUtil.generateIv();
-      byte[] testPlain = CryptoUtil.randomBytes(128);
-      ByteArrayOutputStream encryptedTest = new ByteArrayOutputStream();
+        // === test.txt logic ===
+        byte[] testIv = CryptoUtil.generateIv();
+        byte[] testPlain = CryptoUtil.randomBytes(128);
+        ByteArrayOutputStream encryptedTest = new ByteArrayOutputStream();
 
-      if (payloadStream == null) throw new IllegalArgumentException("Payload stream is null");
+        if (payloadStream == null)
+          throw new IllegalArgumentException("Payload stream is null");
 
-      CryptoUtil.aesGcmEncrypt(aesKey, testIv, new ByteArrayInputStream(testPlain), encryptedTest);
+        CryptoUtil.aesGcmEncrypt(aesKey, testIv, new ByteArrayInputStream(testPlain), encryptedTest);
 
-      String testEntry = String.join(
-          "\n",
-          Base64.getEncoder().encodeToString(testIv),
-          Base64.getEncoder().encodeToString(testPlain),
-          Base64.getEncoder().encodeToString(encryptedTest.toByteArray())
-      );
-      writeEntry(zos, ENTRY_TEST, testEntry.getBytes(StandardCharsets.UTF_8));
-      // === end test.txt logic ===
+        String testEntry = String.join(
+            "\n",
+            Base64.getEncoder().encodeToString(testIv),
+            Base64.getEncoder().encodeToString(testPlain),
+            Base64.getEncoder().encodeToString(encryptedTest.toByteArray()));
+        writeEntry(zos, ENTRY_TEST, testEntry.getBytes(StandardCharsets.UTF_8));
+        // === end test.txt logic ===
 
-      byte[] iv = CryptoUtil.generateIv();
-      writeEntry(zos, ENTRY_IV, Base64.getEncoder().encode(iv));
+        iv = CryptoUtil.generateIv();
+        writeEntry(zos, ENTRY_IV, Base64.getEncoder().encode(iv));
+      }
       writeEntry(zos, ENTRY_MIME, mimeType.getBytes());
 
-      zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
-      CryptoUtil.aesGcmEncrypt(aesKey, iv, payloadStream, zos);
-      zos.closeEntry();
+      if (pubKeyPem.isPresent() && iv != null && aesKey != null) {
+        zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
+        CryptoUtil.aesGcmEncrypt(aesKey, iv, payloadStream, zos);
+        zos.closeEntry();
+      } else {
+
+        zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
+        byte[] streamBytes = new byte[4096];
+        int len;
+        while ((len = payloadStream.read(streamBytes)) != -1) {
+          zos.write(streamBytes, 0, len);
+        }
+        zos.closeEntry();
+      }
     }
 
-    //make sure all data is written to disk
+    // make sure all data is written to disk
     FileChannel.open(zip, StandardOpenOption.WRITE).force(true);
     return zip.toFile();
   }

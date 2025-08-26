@@ -29,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 /**
@@ -65,7 +66,7 @@ public class Ginger implements Callable<Integer> {
 
   //── Picocli-bound options ──────────────────────────────────────────────────────
 
-  @Option(names = {"-j", "--jwt"}, description = "JWT string or file path", required = true)
+  @Option(names = {"-j", "--jwt"}, description = "JWT string or file path" /* , required = true*/)
   private String jwt;
 
   @Option(names = {"--uuid"}, description = "Override project UUID (else from JWT)")
@@ -86,6 +87,9 @@ public class Ginger implements Callable<Integer> {
   @Option(names = "--output", description = "Directory to write encrypted zip")
   private Path outputDir;
 
+  @Option(names = "--skip-key", description = "Skip encrypting with a key. Makes a clear-text bundle. Use in combination with '-e' to build a local, clear-text bundle.")
+  private boolean skipKey = false;
+
 
   //── Java-first fluent API ──────────────────────────────────────────────────────
 
@@ -95,6 +99,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger adgDir(Path adgDir) { this.adgDir = adgDir; return this; }
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
+  public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
   public Ginger outputDir(Path d) { this.outputDir = d; return this; }
 
@@ -112,15 +117,17 @@ public class Ginger implements Callable<Integer> {
     String mime   = hasAdg ? MIME_BIGTENT : MIME_DEPLOY;
 
     // JWT
-    String token = resolveJwt();
+    String token = null;
+    if (!this.skipKey) {
+      token = resolveJwt();
     if (!encryptOnly && !isJwtNotExpired()) {
       throw new IllegalArgumentException(ERR_EXP_INVALID);
-    }
+    }}
 
     // Public key & server from JWT claims
-    String pubKey = resolvePublicKeyPem();
+    Optional<String> pubKey = resolvePublicKeyPem();
     String server = encryptOnly ? null : resolveServerUrl();
-    String projId = resolveUuid();
+    Optional<String> projId = resolveUuid();
 
     // Stream or tar payload
     var stream = PayloadStreamer.stream(payload);
@@ -197,12 +204,13 @@ public class Ginger implements Callable<Integer> {
     return cachedJwt;
   }
 
-  private String resolvePublicKeyPem() throws Exception {
+  private Optional<String> resolvePublicKeyPem() throws Exception {
+    if (this.skipKey) return Optional.empty();
     if (cachedPayloadNode == null) {
       cachedPayloadNode = JwtUtil.decodePayload(resolveJwt());
     }
     String claim = JwtUtil.getStringClaim(cachedPayloadNode, CLAIM_PUBLIC_KEY);
-    if (claim != null) return claim;
+    if (claim != null) return Optional.of(claim);
     throw new IllegalArgumentException(ERR_NO_PUBKEY);
   }
 
@@ -215,11 +223,13 @@ public class Ginger implements Callable<Integer> {
     throw new IllegalArgumentException(ERR_NO_SERVER);
   }
 
-  private String resolveUuid() throws Exception {
+  private Optional<String> resolveUuid() throws Exception {
+    if (this.skipKey) return Optional.empty();
+
     JsonNode payloadNode = JwtUtil.decodePayload(resolveJwt());
     String claim = JwtUtil.getStringClaim(payloadNode, CLAIM_UUID);
-    if (claim != null) return claim;
-    if (uuid != null) return uuid;
+    if (claim != null) return Optional.of(claim);
+    if (uuid != null) return Optional.of(uuid);
     throw new IllegalArgumentException(ERR_NO_UUID);
   }
 

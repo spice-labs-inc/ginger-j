@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,7 +49,7 @@ class ZipBuilderTest {
       });
 
       File zip = ZipBuilder.build(
-          "u", "pem",
+          Optional.of("u"), Optional.of("pem"),
           new ByteArrayInputStream(data),
           false,
           "application/x",
