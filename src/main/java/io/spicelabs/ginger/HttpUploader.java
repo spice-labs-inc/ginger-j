@@ -43,7 +43,7 @@ public class HttpUploader {
         .post(body)
         .build();
 
-    log.info("Starting bundle upload ({} bytes)", bundle.length());
+    log.info("Starting bundle upload ({} bytes) to {}", bundle.length(), serverUrl);
     try (Response resp = CLIENT.newCall(request).execute()) {
       if (resp.isSuccessful()) {
         log.info("Successfully sent bundle");
