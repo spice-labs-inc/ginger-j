@@ -15,18 +15,23 @@ limitations under the License. */
 
 package io.spicelabs.ginger;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-import java.io.File;
-import java.io.IOException;
-
 public class HttpUploader {
   private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(HttpUploader.class);
-  private static final OkHttpClient CLIENT = new OkHttpClient();
+  private static final OkHttpClient CLIENT = new OkHttpClient()
+      .newBuilder()
+      .writeTimeout(5, TimeUnit.MINUTES)
+      .readTimeout(5, TimeUnit.MINUTES)
+      .build();
 
   public static void upload(String serverUrl, String jwt, File bundle) throws IOException {
     MediaType mediaType = MediaType.parse("application/zip");
@@ -38,6 +43,7 @@ public class HttpUploader {
         .post(body)
         .build();
 
+    log.info("Starting bundle upload ({} bytes)", bundle.length());
     try (Response resp = CLIENT.newCall(request).execute()) {
       if (resp.isSuccessful()) {
         log.info("Successfully sent bundle");
