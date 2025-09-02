@@ -10,7 +10,7 @@
 
     <groupId>io.spicelabs</groupId>
     <artifactId>ginger-j</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.7</version>
     <packaging>jar</packaging>
     <url>https://github.com/spice-labs-inc/ginger-j</url>
 
