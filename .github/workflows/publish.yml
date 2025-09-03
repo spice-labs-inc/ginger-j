@@ -1,4 +1,4 @@
-name: Publish package to Maven Central and Github Packages #ginger-j
+name: Publish package to Maven Central and Github Packages
 
 on:
   push:
@@ -24,15 +24,6 @@ jobs:
       release_channel_id: ${{ steps.release-notification.outputs.channel_id }}
 
     steps:
-      - name: Notify release
-        id: release-notification
-        uses: spice-labs-inc/action-release-notification@main
-        with:
-          type: release
-          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
-          username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
-          github-token: ${{ github.token }}
-
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -43,11 +34,23 @@ jobs:
           VERSION="${RAW_TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Validate version format (X.Y.Z)
-        shell: bash
-        run: |
-          VERSION="${{ steps.tag.outputs.version }}"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version format: $VERSION"; exit 1; }
+      # Option B: Create the GitHub Release from the tag, then notify Slack
+      - name: Create GitHub Release from tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Notify release
+        id: release-notification
+        uses: spice-labs-inc/action-release-notification@main
+        with:
+          type: release
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
+          github-token: ${{ github.token }}
 
       - name: Set up Java (Temurin 21) with Maven cache
         uses: actions/setup-java@v4
@@ -60,7 +63,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml <<'EOF'
+          cat > ~/..m2/settings.xml <<'EOF'
           <settings>
             <servers>
               <server>
@@ -83,11 +86,10 @@ jobs:
       - name: Update version in pom.xml
         run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
-      # Build once to ensure artifacts exist for scanning & signing
       - name: Build (no tests)
         run: mvn -B -DskipTests package
 
-      # Project compliance: scan built artifacts and upload to Spice Labs
+      # Compliance: scan built artifacts and upload to Spice Labs
       - name: Scan built artifacts with Spice‑Labs CLI
         shell: bash
         env:
@@ -100,7 +102,23 @@ jobs:
         env:
           GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
 
-      # Use a clean Java setup for GH Packages to mirror the last successful run
+      - name: Resolve Maven coordinates
+        id: gav
+        run: |
+          GROUP_ID=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.groupId)
+          ARTIFACT_ID=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.artifactId)
+          echo "group_id=$GROUP_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Link to Maven Central Deployment
+        if: always()
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          GROUP_ID="${{ steps.gav.outputs.group_id }}"
+          ARTIFACT_ID="${{ steps.gav.outputs.artifact_id }}"
+          echo "👉 Check deployment status in Sonatype Central:"
+          echo "https://central.sonatype.com/publishing/deployments?name=${GROUP_ID}:${ARTIFACT_ID}&version=${VERSION}"
+
       - name: Set up Java for GitHub Packages
         uses: actions/setup-java@v4
         with:
