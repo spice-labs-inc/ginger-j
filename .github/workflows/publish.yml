@@ -44,7 +44,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # Ensure the new Release is visible to the API before notifying Slack
       - name: Wait for release propagation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,7 +59,7 @@ jobs:
 
       - name: Notify release
         id: release-notification
-        uses: spice-labs-inc/action-release-notification@main
+        uses: spice-labs-inc/action-release-notification@v1
         with:
           type: release
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -164,7 +163,7 @@ jobs:
           fi
 
       - name: Notify deployment result
-        uses: spice-labs-inc/action-release-notification@main
+        uses: spice-labs-inc/action-release-notification@v1
         with:
           type: ${{ steps.deployment-status.outputs.overall_status }}
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
