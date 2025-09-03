@@ -34,14 +34,30 @@ jobs:
           VERSION="${RAW_TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # Create the GitHub Release from the tag, then notify Slack
       - name: Create GitHub Release from tag
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+      # Wait for the newly created release to become visible via the API,
+      # so the Slack step doesn't read the previous release
+      - name: Wait for release propagation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          TAG="${{ github.ref_name }}"
+          for i in {1..20}; do
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null 2>&1 && break
+            echo "Release for ${TAG} not visible yet; retry ${i}/20"
+            sleep 3
+          done
 
       - name: Notify release
         id: release-notification
@@ -89,7 +105,6 @@ jobs:
       - name: Build (no tests)
         run: mvn -B -DskipTests package
 
-      # Compliance: scan built artifacts and upload to Spice Labs
       - name: Scan built artifacts with Spice‑Labs CLI
         shell: bash
         env:
