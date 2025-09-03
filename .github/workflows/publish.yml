@@ -111,12 +111,7 @@ jobs:
         env:
           SPICE_PASS: ${{ secrets.SPICE_PASS }}
         run: |
-          docker run --rm \
-            -v "$PWD/target:/mnt/input:ro" \
-            -e SPICE_PASS \
-            spicelabs/spice-labs-cli:latest \
-            --input /mnt/input \
-            --tag "ginger-j-${{ steps.tag.outputs.version }}"
+          docker run --rm             -v "$PWD/target:/mnt/input:ro"             -e SPICE_PASS             spicelabs/spice-labs-cli:latest             --input /mnt/input             --tag "ginger-j-${{ steps.tag.outputs.version }}"
 
       - name: Publish to Maven Central
         run: mvn --batch-mode deploy -P maven-central
@@ -149,7 +144,7 @@ jobs:
       - name: Publish to GitHub Packages
         run: mvn --batch-mode deploy -P github
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
   notify:
     needs: [publish]
