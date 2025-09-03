@@ -44,6 +44,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      # Ensure the new Release is visible to the API before notifying Slack
       - name: Wait for release propagation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,6 +61,7 @@ jobs:
       - name: Notify release
         id: release-notification
         uses: spice-labs-inc/action-release-notification@v1
+        continue-on-error: true
         with:
           type: release
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -110,7 +112,12 @@ jobs:
         env:
           SPICE_PASS: ${{ secrets.SPICE_PASS }}
         run: |
-          docker run --rm             -v "$PWD/target:/mnt/input:ro"             -e SPICE_PASS             spicelabs/spice-labs-cli:latest             --input /mnt/input             --tag "ginger-j-${{ steps.tag.outputs.version }}"
+          docker run --rm \
+            -v "$PWD/target:/mnt/input:ro" \
+            -e SPICE_PASS \
+            spicelabs/spice-labs-cli:latest \
+            --input /mnt/input \
+            --tag "ginger-j-${{ steps.tag.outputs.version }}"
 
       - name: Publish to Maven Central
         run: mvn --batch-mode deploy -P maven-central
@@ -164,6 +171,7 @@ jobs:
 
       - name: Notify deployment result
         uses: spice-labs-inc/action-release-notification@v1
+        continue-on-error: true
         with:
           type: ${{ steps.deployment-status.outputs.overall_status }}
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -175,3 +183,4 @@ jobs:
           github-token: ${{ github.token }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
