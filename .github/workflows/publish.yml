@@ -60,7 +60,7 @@ jobs:
 
       - name: Notify release
         id: release-notification
-        uses: spice-labs-inc/action-release-notification@v1
+        uses: spice-labs-inc/action-release-notification@main
         continue-on-error: true
         with:
           type: release
@@ -170,7 +170,7 @@ jobs:
           fi
 
       - name: Notify deployment result
-        uses: spice-labs-inc/action-release-notification@v1
+        uses: spice-labs-inc/action-release-notification@main
         continue-on-error: true
         with:
           type: ${{ steps.deployment-status.outputs.overall_status }}
