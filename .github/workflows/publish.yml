@@ -44,8 +44,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      # Wait for the newly created release to become visible via the API,
-      # so the Slack step doesn't read the previous release
+      # Ensure the new Release is visible to the API before notifying Slack
       - name: Wait for release propagation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,6 +66,8 @@ jobs:
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
           username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
           github-token: ${{ github.token }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Set up Java (Temurin 21) with Maven cache
         uses: actions/setup-java@v4
@@ -105,12 +106,17 @@ jobs:
       - name: Build (no tests)
         run: mvn -B -DskipTests package
 
-      - name: Scan built artifacts with Spice‑Labs CLI
+      - name: Scan built artifacts with Spice-Labs CLI
         shell: bash
         env:
           SPICE_PASS: ${{ secrets.SPICE_PASS }}
         run: |
-          docker run --rm             -v "$PWD/target:/mnt/input:ro"             -e SPICE_PASS             spicelabs/spice-labs-cli:latest               --input /mnt/input               --tag ginger-j-${{ steps.tag.outputs.version }}
+          docker run --rm \
+            -v "$PWD/target:/mnt/input:ro" \
+            -e SPICE_PASS \
+            spicelabs/spice-labs-cli:latest \
+            --input /mnt/input \
+            --tag "ginger-j-${{ steps.tag.outputs.version }}"
 
       - name: Publish to Maven Central
         run: mvn --batch-mode deploy -P maven-central
@@ -172,3 +178,6 @@ jobs:
           environment: production
           thread-ts: ${{ needs.publish.outputs.release_timestamp }}
           channel-id: ${{ needs.publish.outputs.release_channel_id }}
+          github-token: ${{ github.token }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
