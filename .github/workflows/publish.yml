@@ -34,7 +34,7 @@ jobs:
           VERSION="${RAW_TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # Option B: Create the GitHub Release from the tag, then notify Slack
+      # Create the GitHub Release from the tag, then notify Slack
       - name: Create GitHub Release from tag
         uses: softprops/action-gh-release@v2
         with:
@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ~/.m2
-          cat > ~/..m2/settings.xml <<'EOF'
+          cat > ~/.m2/settings.xml <<EOF
           <settings>
             <servers>
               <server>
@@ -116,7 +116,7 @@ jobs:
           VERSION="${{ steps.tag.outputs.version }}"
           GROUP_ID="${{ steps.gav.outputs.group_id }}"
           ARTIFACT_ID="${{ steps.gav.outputs.artifact_id }}"
-          echo "👉 Check deployment status in Sonatype Central:"
+          echo "Check deployment status in Sonatype Central:"
           echo "https://central.sonatype.com/publishing/deployments?name=${GROUP_ID}:${ARTIFACT_ID}&version=${VERSION}"
 
       - name: Set up Java for GitHub Packages
