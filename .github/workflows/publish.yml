@@ -1,9 +1,9 @@
-name: Publish Java artifacts to Maven Central & GitHub Packages  # ginger-j
+name: Publish package to Maven Central and Github Packages #ginger-j
 
 on:
   push:
-    tags: [ 'v*.*.*' ]   # semantic version tags only
-  workflow_dispatch: {}  # manual runs
+    tags: [ 'v*.*.*' ]  # Trigger only on semantic version tags
+  workflow_dispatch: {}  # Manual trigger
 
 permissions:
   contents: write
@@ -11,57 +11,20 @@ permissions:
   id-token: write
   attestations: write
 
-env:
-  REPO: ${{ github.event.repository.name }}
-
 jobs:
-  check-version:
-    name: Validate tag and POM version alignment
-    runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.vers.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Extract version from tag (strip leading v)
-        id: vers
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Validate version format X.Y.Z
-        shell: bash
-        run: |
-          [[ "${{ steps.vers.outputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "Invalid version: '${{ steps.vers.outputs.version }}'"; exit 1;
-          }
-
-      - name: Compare POM version with tag version
-        shell: bash
-        run: |
-          POM_VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
-          if [[ "$POM_VERSION" != "${{ steps.vers.outputs.version }}" ]]; then
-            echo "POM version ($POM_VERSION) does not match tag version (${{ steps.vers.outputs.version }})"
-            exit 1
-          fi
-
   publish:
-    name: Build, stage artifacts, publish to Central & GH Packages
+    name: Publish
     runs-on: ubuntu-24.04
-    needs: [check-version]
     permissions:
       contents: write
       packages: write
     outputs:
+      version: ${{ steps.tag.outputs.version }}
       release_timestamp: ${{ steps.release-notification.outputs.timestamp }}
       release_channel_id: ${{ steps.release-notification.outputs.channel_id }}
-      version: ${{ needs.check-version.outputs.version }}
+
     steps:
-      - name: Notify release start
+      - name: Notify release
         id: release-notification
         uses: spice-labs-inc/action-release-notification@main
         with:
@@ -70,17 +33,31 @@ jobs:
           username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
           github-token: ${{ github.token }}
 
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Java 21 (Temurin) with Maven cache
+      - name: Get version from tag (strip 'v')
+        id: tag
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          VERSION="${RAW_TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version format (X.Y.Z)
+        shell: bash
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version format: $VERSION"; exit 1; }
+
+      - name: Set up Java (Temurin 21) with Maven cache
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
 
-      - name: Write settings.xml for Maven Central
+      - name: Write settings.xml for Central
+        shell: bash
         run: |
           mkdir -p ~/.m2
           cat > ~/.m2/settings.xml <<'EOF'
@@ -88,8 +65,8 @@ jobs:
             <servers>
               <server>
                 <id>central</id>
-                <username>${env.MAVEN_CENTRAL_USERNAME}</username>
-                <password>${env.MAVEN_CENTRAL_PASSWORD}</password>
+                <username>${MAVEN_CENTRAL_USERNAME}</username>
+                <password>${MAVEN_CENTRAL_PASSWORD}</password>
               </server>
             </servers>
           </settings>
@@ -98,87 +75,53 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
 
-      - name: Import GPG key for signing
+      - name: Import GPG key
+        shell: bash
         run: |
           echo "${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}" | gpg --batch --import
 
-      - name: Update POM version to tag version
-        run: mvn -B versions:set -DnewVersion='${{ needs.check-version.outputs.version }}' -DgenerateBackupPoms=false
+      - name: Update version in pom.xml
+        run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
-      # Build first so we always have artifacts even if deploy later fails
-      - name: Build package (skip tests)
+      # Build once to ensure artifacts exist for scanning & signing
+      - name: Build (no tests)
         run: mvn -B -DskipTests package
 
-      - name: Collect JVM artifacts
+      # Project compliance: scan built artifacts and upload to Spice Labs
+      - name: Scan built artifacts with Spice‑Labs CLI
+        shell: bash
+        env:
+          SPICE_PASS: ${{ secrets.SPICE_PASS }}
         run: |
-          mkdir -p artifacts/jvm
-          cp -r target/*.jar artifacts/jvm/ 2>/dev/null || true
-          cp -r target/*.pom artifacts/jvm/ 2>/dev/null || true
-          cp -r pom.xml artifacts/jvm/
-
-      - name: Upload JVM build artifacts (stable name)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.REPO }}-binary-${{ github.run_id }}
-          path: artifacts/jvm/**
-          if-no-files-found: warn
-          retention-days: 7
+          docker run --rm             -v "$PWD/target:/mnt/input:ro"             -e SPICE_PASS             spicelabs/spice-labs-cli:latest               --input /mnt/input               --tag ginger-j-${{ steps.tag.outputs.version }}
 
       - name: Publish to Maven Central
-        run: mvn --batch-mode -P maven-central deploy
+        run: mvn --batch-mode deploy -P maven-central
         env:
           GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
 
-      - name: Set up Java 21 for GitHub Packages
+      # Use a clean Java setup for GH Packages to mirror the last successful run
+      - name: Set up Java for GitHub Packages
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Publish to GitHub Packages
-        run: mvn --batch-mode -P github deploy
+        run: mvn --batch-mode deploy -P github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  scan:
-    name: Scan all artifacts and upload results
-    runs-on: ubuntu-24.04
-    needs: [publish]
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: ${{ env.REPO }}-binary-*
-          merge-multiple: true
-
-      - name: Run Spice-Labs CLI scan over ALL artifacts
-        uses: spice-labs-inc/action-spice-labs-cli-scan@v3
-        with:
-          spice_pass: ${{ secrets.SPICE_PASS }}
-          file_path: artifacts
-          tag: ${{ env.REPO }}
-
-      - name: Upload scan outputs (if present)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.REPO }}-scan-${{ github.run_id }}
-          path: artifacts/**/*.adg.json
-          if-no-files-found: ignore
-          retention-days: 7
-
   notify:
-    name: Notify deployment result
     needs: [publish]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Compute status
-        id: status
+        id: deployment-status
         shell: bash
         run: |
-          if [[ "${{ needs.publish.result }}" == "success" ]]; then
+          if [ "${{ needs.publish.result }}" = "success" ]; then
             echo "overall_status=deployment-success" >> "$GITHUB_OUTPUT"
             echo "workflow_name=Release" >> "$GITHUB_OUTPUT"
           else
@@ -186,13 +129,13 @@ jobs:
             echo "workflow_name=Release - Publishing failed" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Notify Slack
+      - name: Notify deployment result
         uses: spice-labs-inc/action-release-notification@main
         with:
-          type: ${{ steps.status.outputs.overall_status }}
+          type: ${{ steps.deployment-status.outputs.overall_status }}
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
           username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
-          workflow-name: ${{ steps.status.outputs.workflow_name }}
+          workflow-name: ${{ steps.deployment-status.outputs.workflow_name }}
           environment: production
           thread-ts: ${{ needs.publish.outputs.release_timestamp }}
           channel-id: ${{ needs.publish.outputs.release_channel_id }}
