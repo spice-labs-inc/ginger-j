@@ -2,7 +2,11 @@ name: Publish package to Maven Central and Github Packages
 
 on:
   push:
-    tags: [ 'v*.*.*' ]  # Trigger only on semantic version tags
+    branches:
+      - main
+      - mj/cli-scan
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
