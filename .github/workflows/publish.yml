@@ -3,7 +3,6 @@ name: Publish package to Maven Central and Github Packages
 on:
   push:
     tags: [ 'v*.*.*' ]  # Trigger only on semantic version tags
-  workflow_dispatch: {}  # Manual trigger
 
 permissions:
   contents: write
