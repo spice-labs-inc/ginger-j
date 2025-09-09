@@ -17,22 +17,14 @@ permissions:
 jobs:
   publish:
     name: Publish
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.tag.outputs.version }}
-      release_timestamp: ${{ steps.release-notification.outputs.timestamp }}
-      release_channel_id: ${{ steps.release-notification.outputs.channel_id }}
+      release_timestamp: ${{ steps.release_notification.outputs.timestamp }}
+      release_channel_id: ${{ steps.release_notification.outputs.channel_id }}
 
     steps:
-      - name: Notify release
-        id: release-notification
-        uses: spice-labs-inc/action-release-notification@main
-        with:
-          type: release
-          slack-bot-token: "${{ secrets.SLACK_BOT_TOKEN }}"
-          username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
-          github-token: "${{ github.token }}"
-
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -49,7 +41,7 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure tag commit is on main (public release policy)
+      - name: Ensure tag commit is on main
         id: onmain
         shell: bash
         run: |
@@ -95,8 +87,7 @@ jobs:
       - name: Update version locally in pom.xml
         run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
-      - name: Build artifacts for scan only (no publish)
-        if: steps.onmain.outputs.on_main != 'true'
+      - name: Build artifacts (for scan)
         run: mvn --batch-mode -DskipTests package
 
       - name: Publish to Maven Central
@@ -115,12 +106,24 @@ jobs:
         uses: spice-labs-inc/action-spice-labs-cli-scan@v3
         with:
           spice_pass: "${{ secrets.SPICE_PASS }}"
-          file_path: "${{ github.workspace }}"
+          file_path: "${{ github.workspace }}/target"
           tag: "${{ github.event.repository.name }}"  # e.g., "ginger-j"
+
+      - name: Notify release
+        id: release_notification
+        continue-on-error: true
+        uses: spice-labs-inc/action-release-notification@main
+        with:
+          type: release
+          slack-bot-token: "${{ secrets.SLACK_BOT_TOKEN }}"
+          username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
+          github-token: "${{ github.token }}"
+          channel-id: "${{ secrets.SLACK_RELEASE_CHANNEL_ID }}"
+          channel: "#release-notifications"
 
   notify:
     needs: [publish]
-    if: always()
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - name: Check deployment status
@@ -137,6 +140,7 @@ jobs:
           fi
 
       - name: Notify deployment result
+        continue-on-error: true
         uses: spice-labs-inc/action-release-notification@main
         with:
           type: ${{ steps.deployment-status.outputs.overall_status == 'success' && 'deployment-success' || 'deployment-failure' }}
@@ -144,5 +148,5 @@ jobs:
           username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
           workflow-name: ${{ steps.deployment-status.outputs.overall_status == 'success' && 'Release' || format('Release - {0}', steps.deployment-status.outputs.message) }}
           environment: production
-          thread-ts: "${{ needs.publish.outputs.release_timestamp }}"
-          channel-id: "${{ needs.publish.outputs.release_channel_id }}"
+          channel-id: "${{ needs.publish.outputs.release_channel_id || secrets.SLACK_RELEASE_CHANNEL_ID }}"
+          channel: "#release-notifications"
