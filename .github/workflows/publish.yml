@@ -53,6 +53,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Open Slack thread early, like the original workflow
+      - name: Notify release
+        id: release_notification
+        continue-on-error: true
+        uses: spice-labs-inc/action-release-notification@main
+        with:
+          type: release
+          slack-bot-token: "${{ secrets.SLACK_BOT_TOKEN }}"
+          username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
+          github-token: "${{ github.token }}"
+
       - name: Validate and extract version from tag
         id: tag
         shell: bash
@@ -110,7 +121,7 @@ jobs:
       - name: Set project version from tag
         run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
-      - name: Build artifacts (for publication & scan)
+      - name: Build artifacts (for publication and scan)
         run: mvn --batch-mode -DskipTests package
 
       - name: Publish to Maven Central
@@ -131,18 +142,6 @@ jobs:
           spice_pass: "${{ secrets.SPICE_PASS }}"
           file_path: "${{ github.workspace }}/target"
           tag: "${{ github.event.repository.name }}"
-
-      - name: Notify release
-        id: release_notification
-        continue-on-error: true
-        uses: spice-labs-inc/action-release-notification@main
-        with:
-          type: release
-          slack-bot-token: "${{ secrets.SLACK_BOT_TOKEN }}"
-          username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
-          github-token: "${{ github.token }}"
-          channel-id: "${{ secrets.SLACK_RELEASE_CHANNEL_ID }}"
-          channel: "#release-notifications"
 
   notify:
     needs: [release_publish]
@@ -171,5 +170,5 @@ jobs:
           username-mapping: "${{ secrets.GH_SLACK_USERNAME_MAPPING }}"
           workflow-name: Release
           environment: production
-          channel-id: "${{ needs.release_publish.outputs.release_channel_id || secrets.SLACK_RELEASE_CHANNEL_ID }}"
-          channel: "#release-notifications"
+          thread-ts: "${{ needs.release_publish.outputs.release_timestamp }}"
+          channel-id: "${{ needs.release_publish.outputs.release_channel_id }}"
