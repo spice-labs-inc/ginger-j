@@ -88,6 +88,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Index and upload ADG
+        uses: spice-labs-inc/action-spice-labs-cli-scan@v3
+        with:
+          spice_pass: "${{ secrets.SPICE_PASS }}"
+          file_path: "./target"
+          tag: "${{ github.event.repository.name }}"
+
   notify:
     needs: [publish]
     if: always()
