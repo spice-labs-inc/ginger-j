@@ -15,22 +15,26 @@ limitations under the License. */
 
 package io.spicelabs.ginger;
 
-import picocli.CommandLine;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import picocli.CommandLine;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
 
 /**
  * Single entrypoint for both CLI and Java callers.
@@ -90,6 +94,15 @@ public class Ginger implements Callable<Integer> {
   @Option(names = "--skip-key", description = "Skip encrypting with a key. Makes a clear-text bundle. Use in combination with '-e' to build a local, clear-text bundle.")
   private boolean skipKey = false;
 
+  @Option(
+      names = "--extra-args",
+      description = "Additional Ginger builder args in key=value format (e.g. --extra-args=\"--skip-key,--encrypt-only\")",
+      split = ","
+  )
+  List<String> extraArgsRaw;
+
+  Map<String, String> extraArgs;
+
 
   //── Java-first fluent API ──────────────────────────────────────────────────────
 
@@ -102,11 +115,13 @@ public class Ginger implements Callable<Integer> {
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
   public Ginger outputDir(Path d) { this.outputDir = d; return this; }
+  public Ginger extraArgs(Map<String, String> args) { this.extraArgs = args; return this; }
 
   /**
    * Perform the work—encrypt (and optionally upload).
    */
   public void run() throws Exception {
+    processExtraArgs();
     boolean hasAdg    = adgDir != null;
     boolean hasEvents = deploymentEventsFile != null;
     if (hasAdg == hasEvents) {
@@ -115,6 +130,7 @@ public class Ginger implements Callable<Integer> {
 
     Path payload  = hasAdg ? adgDir : deploymentEventsFile;
     String mime   = hasAdg ? MIME_BIGTENT : MIME_DEPLOY;
+
 
     // JWT
     String token = null;
@@ -140,9 +156,6 @@ public class Ginger implements Callable<Integer> {
       log.warn("Output dir fallback: using {}", outDir);
     }
 
-
-
-
     File bundle = ZipBuilder.build(
         projId, pubKey, stream, Files.isDirectory(payload),
         mime, comment, outDir
@@ -156,7 +169,6 @@ public class Ginger implements Callable<Integer> {
     }
 
     HttpUploader.upload(server, token, bundle);
-    return;
   }
 
   //── Picocli entrypoint ─────────────────────────────────────────────────────────
@@ -238,5 +250,118 @@ public class Ginger implements Callable<Integer> {
     long exp = JwtUtil.getLongClaim(payloadNode, CLAIM_EXP);
     if (exp <= 0) throw new IllegalArgumentException(ERR_EXP_INVALID);
     return Instant.now().getEpochSecond() < exp;
+  }
+
+  private void processExtraArgs() {
+    if ((extraArgsRaw == null || extraArgsRaw.isEmpty()) && (extraArgs == null || extraArgs.isEmpty())) {
+      return;
+    }
+
+    List<String> tokens = new ArrayList<>();
+    if (extraArgsRaw != null && !extraArgsRaw.isEmpty()) {
+      tokens.addAll(extraArgsRaw);
+    } else {
+      for (Map.Entry<String, String> e : extraArgs.entrySet()) {
+        String k = e.getKey();
+        String v = e.getValue();
+        if (v == null || v.isEmpty()) {
+          tokens.add(k);
+        } else {
+          tokens.add(k + "=" + v);
+        }
+      }
+    }
+
+    for (int i = 0; i < tokens.size(); i++) {
+      String raw = tokens.get(i);
+      String arg = raw == null ? "" : raw.trim();
+       if (arg.isEmpty()) continue;
+       String key;
+       String value = null;
+       int eq = arg.indexOf('=');
+       if (eq >= 0) {
+         key = arg.substring(0, eq);
+         value = arg.substring(eq + 1);
+       } else {
+         key = arg;
+         // If this option expects a value and next token is a non-option, take it as the value.
+         if (expectsValue(key) && (i + 1) < tokens.size()) {
+           String next = tokens.get(i + 1);
+           if (next != null) {
+             String nt = next.trim();
+             if (!nt.isEmpty() && !nt.startsWith("-")) {
+               value = nt;
+               i++; // consume next token
+             }
+           }
+         }
+         // For comment-no-sensitive-info, allow flag form (no value) mapping to empty string
+         if ("--comment-no-sensitive-info".equals(key) && value == null) {
+           value = "";
+         }
+       }
+
+       switch (key) {
+         case "--skip-key" -> this.skipKey = true;
+         case "--encrypt-only", "-e" -> this.encryptOnly = true;
+
+         case "--jwt", "-j" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--jwt requires a value (use --jwt=/path/to/jwt or -j /path)");
+           }
+           this.jwt = value;
+         }
+
+         case "--uuid" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--uuid requires a value");
+           }
+           this.uuid = value;
+         }
+
+         case "--adg" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--adg requires a value (directory path)");
+           }
+           this.adgDir = Paths.get(value);
+         }
+
+         case "--deployment-events" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--deployment-events requires a value (file path)");
+           }
+           this.deploymentEventsFile = Paths.get(value);
+         }
+
+         case "--output" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--output requires a value (directory path)");
+           }
+           this.outputDir = Paths.get(value);
+         }
+
+         case "--comment-no-sensitive-info" -> {
+           // can be passed as flag or with a value
+           this.comment = value;
+         }
+
+         case "--comment" -> {
+           if (value == null) {
+             throw new IllegalArgumentException("--comment requires a value");
+           }
+           this.comment = value;
+         }
+
+         default -> log.warn("Unknown extra arg: {}", arg);
+       }
+     }
+   }
+
+  private boolean expectsValue(String key) {
+    return switch (key) {
+      case "--jwt", "-j", "--uuid", "--adg", "--deployment-events",
+           "--output", "--comment", "--comment-no-sensitive-info" -> true;
+      default -> false;
+    };
   }
 }
