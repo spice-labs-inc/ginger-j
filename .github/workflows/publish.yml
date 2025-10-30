@@ -118,13 +118,12 @@ jobs:
           fi
 
       - name: Notify deployment result
-        uses: spice-labs-inc/action-release-notification@main
+        uses: spice-labs-inc/action-release-notification@v3
         with:
           type: ${{ steps.deployment-status.outputs.overall_status == 'success' && 'deployment-success' || 'deployment-failure' }}
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
           username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
           github-token: ${{ github.token }}
-          workflow-name: ${{ steps.deployment-status.outputs.overall_status == 'success' && 'Release' || format('Release - {0}', steps.deployment-status.outputs.message) }}
           environment: production
           thread-ts: ${{ needs.publish.outputs.thread-ts }}
           channel-id: ${{ needs.publish.outputs.channel-id }}
