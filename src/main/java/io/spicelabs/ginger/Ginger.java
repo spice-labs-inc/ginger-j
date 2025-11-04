@@ -35,6 +35,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import java.security.Security;
 
 /**
  * Single entrypoint for both CLI and Java callers.
@@ -121,6 +123,7 @@ public class Ginger implements Callable<Integer> {
    * Perform the work—encrypt (and optionally upload).
    */
   public void run() throws Exception {
+    Security.addProvider(new BouncyCastleProvider());
     processExtraArgs();
     boolean hasAdg    = adgDir != null;
     boolean hasEvents = deploymentEventsFile != null;
@@ -176,6 +179,7 @@ public class Ginger implements Callable<Integer> {
   @Override
   public Integer call() throws Exception {
     try {
+      Security.addProvider(new BouncyCastleProvider());
       run();
       return 0;
     } catch (Throwable ex) {
@@ -188,6 +192,7 @@ public class Ginger implements Callable<Integer> {
   }
 
   public static void main(String[] args) {
+    Security.addProvider(new BouncyCastleProvider());
     int exitCode = new CommandLine(new Ginger())
         .setExecutionStrategy(new CommandLine.RunLast())
         .execute(args);

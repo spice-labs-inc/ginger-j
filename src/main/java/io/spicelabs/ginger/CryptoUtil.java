@@ -28,6 +28,11 @@ import java.security.SecureRandom;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
+import java.io.IOException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.BadPaddingException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 
 public class CryptoUtil {
 
@@ -68,20 +73,22 @@ public class CryptoUtil {
   }
 
   public static void aesGcmEncrypt(byte[] key, byte[] iv,
-                                   InputStream in, OutputStream out) throws Exception {
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    SecretKeySpec ks = new SecretKeySpec(key, "AES");
-    GCMParameterSpec spec = new GCMParameterSpec(128, iv);
-    cipher.init(Cipher.ENCRYPT_MODE, ks, spec);
+      InputStream in, OutputStream out) throws Exception {
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
+      SecretKeySpec ks = new SecretKeySpec(key, "AES");
+      GCMParameterSpec spec = new GCMParameterSpec(128, iv);
+      cipher.init(Cipher.ENCRYPT_MODE, ks, spec);
 
-    byte[] buf = new byte[4096], enc;
-    int len;
-    while ((len = in.read(buf)) != -1) {
-      enc = cipher.update(buf, 0, len);
-      if (enc != null) out.write(enc);
-    }
-    enc = cipher.doFinal();
-    if (enc != null) out.write(enc);
+      byte[] buf = new byte[4096], enc;
+      int len;
+      while ((len = in.read(buf)) != -1) {
+        enc = cipher.update(buf, 0, len);
+        if (enc != null)
+          out.write(enc);
+      }
+      enc = cipher.doFinal();
+      if (enc != null)
+        out.write(enc);
   }
 
   public static byte[] randomBytes(int length) throws Exception {
