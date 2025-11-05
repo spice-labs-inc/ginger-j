@@ -58,7 +58,8 @@ public class ZipBuilder {
       boolean payloadIsTar,
       String mimeType,
       String comment,
-      Path outputDir) throws Exception {
+      Path outputDir,
+      BundleFormatVersion version) throws Exception {
 
     Path dir = (outputDir != null)
         ? outputDir.resolve(PayloadStreamer.GINGER_OUTPUT_DIR)
@@ -83,7 +84,7 @@ public class ZipBuilder {
         writeEntry(zos, ENTRY_COMMENT, comment.getBytes());
       }
 
-      writeEntry(zos, ENTRY_VERSION, BUNDLE_VERSION);
+      writeEntry(zos, ENTRY_VERSION, String.valueOf(version.getVersionNumber()).getBytes());
 
       byte[] aesKey = null;
       byte[] iv = null;

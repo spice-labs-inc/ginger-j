@@ -54,7 +54,8 @@ class ZipBuilderTest {
           false,
           "application/x",
           null,
-          tempDir
+          tempDir,
+          BundleFormatVersion.VERSION_1
       );
 
       try (ZipFile zf = new ZipFile(zip)) {
