@@ -15,11 +15,6 @@ limitations under the License. */
 
 package io.spicelabs.ginger;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.OAEPParameterSpec;
-import javax.crypto.spec.PSource;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.KeyFactory;
@@ -28,11 +23,12 @@ import java.security.SecureRandom;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
-import java.io.IOException;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.BadPaddingException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource;
+import javax.crypto.spec.SecretKeySpec;
 
 public class CryptoUtil {
 
@@ -64,8 +60,7 @@ public class CryptoUtil {
         "SHA-256",
         "MGF1",
         MGF1ParameterSpec.SHA256,
-        PSource.PSpecified.DEFAULT // Equivalent to Go’s `label = nil`
-    );
+        PSource.PSpecified.DEFAULT);
 
     Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
     rsa.init(Cipher.ENCRYPT_MODE, pub, oaepParams);
@@ -74,21 +69,21 @@ public class CryptoUtil {
 
   public static void aesGcmEncrypt(byte[] key, byte[] iv,
       InputStream in, OutputStream out) throws Exception {
-      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
-      SecretKeySpec ks = new SecretKeySpec(key, "AES");
-      GCMParameterSpec spec = new GCMParameterSpec(128, iv);
-      cipher.init(Cipher.ENCRYPT_MODE, ks, spec);
+    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
+    SecretKeySpec ks = new SecretKeySpec(key, "AES");
+    GCMParameterSpec spec = new GCMParameterSpec(128, iv);
+    cipher.init(Cipher.ENCRYPT_MODE, ks, spec);
 
-      byte[] buf = new byte[4096], enc;
-      int len;
-      while ((len = in.read(buf)) != -1) {
-        enc = cipher.update(buf, 0, len);
-        if (enc != null)
-          out.write(enc);
-      }
-      enc = cipher.doFinal();
+    byte[] buf = new byte[4096], enc;
+    int len;
+    while ((len = in.read(buf)) != -1) {
+      enc = cipher.update(buf, 0, len);
       if (enc != null)
         out.write(enc);
+    }
+    enc = cipher.doFinal();
+    if (enc != null)
+      out.write(enc);
   }
 
   public static byte[] randomBytes(int length) throws Exception {

@@ -16,7 +16,7 @@ class PayloadStreamerTest {
   void fileStream(@TempDir Path tempDir) throws Exception {
     Path f = tempDir.resolve("a.txt");
     Files.writeString(f, "hello");
-    try (InputStream in = PayloadStreamer.stream(f)) {
+    try (InputStream in = PayloadStreamer.stream(f, BundleFormatVersion.VERSION_1)) {
       assertEquals("hello", new String(in.readAllBytes()));
     }
   }
@@ -26,7 +26,7 @@ class PayloadStreamerTest {
     Path d = tempDir.resolve("d");
     Files.createDirectories(d);
     Files.writeString(d.resolve("x.txt"), "x");
-    try (InputStream in = PayloadStreamer.stream(d);
+    try (InputStream in = PayloadStreamer.stream(d, BundleFormatVersion.VERSION_1);
          TarArchiveInputStream tais = new TarArchiveInputStream(in)) {
       boolean saw = false;
       TarArchiveEntry e;
@@ -48,7 +48,7 @@ class PayloadStreamerTest {
     Path longFile = d.resolve(longFileName);
     Files.writeString(longFile, "oops");
 
-    try (InputStream in = PayloadStreamer.stream(d);
+    try (InputStream in = PayloadStreamer.stream(d, BundleFormatVersion.VERSION_1);
          TarArchiveInputStream tais = new TarArchiveInputStream(in)) {
 
       boolean found = false;

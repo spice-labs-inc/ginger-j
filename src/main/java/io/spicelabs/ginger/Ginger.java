@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.Security;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,8 +37,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import java.security.Security;
 
 /**
  * Single entrypoint for both CLI and Java callers.
@@ -96,6 +96,9 @@ public class Ginger implements Callable<Integer> {
   @Option(names = "--skip-key", description = "Skip encrypting with a key. Makes a clear-text bundle. Use in combination with '-e' to build a local, clear-text bundle.")
   private boolean skipKey = false;
 
+  @Option(names = "--bundle-format-version", description = "Bundle format version (1 or 2). Default is 1.")
+  private int bundleFormatVersion = 1;
+
   @Option(
       names = "--extra-args",
       description = "Additional Ginger builder args in key=value format (e.g. --extra-args=\"--skip-key,--encrypt-only\")",
@@ -117,6 +120,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
   public Ginger outputDir(Path d) { this.outputDir = d; return this; }
+  public Ginger bundleFormatVersion(int v) { this.bundleFormatVersion = v; return this; }
   public Ginger extraArgs(Map<String, String> args) { this.extraArgs = args; return this; }
 
   /**
@@ -149,7 +153,8 @@ public class Ginger implements Callable<Integer> {
     Optional<String> projId = resolveUuid();
 
     // Stream or tar payload
-    var stream = PayloadStreamer.stream(payload);
+    BundleFormatVersion version = BundleFormatVersion.fromInt(bundleFormatVersion);
+    var stream = PayloadStreamer.stream(payload, version);
     Path outDir = (outputDir != null)
         ? outputDir
         : payload.getParent();
@@ -161,7 +166,7 @@ public class Ginger implements Callable<Integer> {
 
     File bundle = ZipBuilder.build(
         projId, pubKey, stream, Files.isDirectory(payload),
-        mime, comment, outDir
+        mime, comment, outDir, version
     );
 
     log.warn("Important! SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
@@ -357,6 +362,13 @@ public class Ginger implements Callable<Integer> {
            this.comment = value;
          }
 
+         case "--bundle-format-version" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--bundle-format-version requires a value (1 or 2)");
+           }
+           this.bundleFormatVersion = Integer.parseInt(value);
+         }
+
          default -> log.warn("Unknown extra arg: {}", arg);
        }
      }
@@ -365,7 +377,8 @@ public class Ginger implements Callable<Integer> {
   private boolean expectsValue(String key) {
     return switch (key) {
       case "--jwt", "-j", "--uuid", "--adg", "--deployment-events",
-           "--output", "--comment", "--comment-no-sensitive-info" -> true;
+           "--output", "--comment", "--comment-no-sensitive-info",
+           "--bundle-format-version" -> true;
       default -> false;
     };
   }

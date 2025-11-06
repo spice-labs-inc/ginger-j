@@ -15,10 +15,6 @@ limitations under the License. */
 
 package io.spicelabs.ginger;
 
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
-import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
-import org.jetbrains.annotations.NotNull;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
@@ -27,9 +23,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.jetbrains.annotations.NotNull;
+
 public class PayloadStreamer {
   public static final String GINGER_OUTPUT_DIR = "ginger-output";
-  public static InputStream stream(Path payload) throws IOException {
+  public static InputStream stream(Path payload, BundleFormatVersion version) throws IOException {
     if (Files.isDirectory(payload)) {
       PipedOutputStream pos = new PipedOutputStream();
       PipedInputStream pis = new PipedInputStream(pos, 64 * 1024); // 64 KB buffer
