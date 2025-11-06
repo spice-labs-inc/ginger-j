@@ -17,6 +17,7 @@ package io.spicelabs.ginger;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.nio.file.Files;
@@ -25,6 +26,7 @@ import java.util.stream.Stream;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import org.jetbrains.annotations.NotNull;
 
 public class PayloadStreamer {
@@ -38,8 +40,13 @@ public class PayloadStreamer {
       final Thread[] threadRef = new Thread[1];
 
       Thread thread = new Thread(() -> {
-        try (TarArchiveOutputStream taos = new TarArchiveOutputStream(pos)) {
-          taos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+        try {
+          OutputStream out = version.supports(BundleFormatVersion.Feature.COMPRESS_TAR)
+              ? new GzipCompressorOutputStream(pos)
+              : pos;
+
+          try (TarArchiveOutputStream taos = new TarArchiveOutputStream(out)) {
+            taos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
           try (Stream<Path> stream = Files.walk(payload)) {
             stream
                 .filter(Files::isRegularFile)
@@ -59,6 +66,7 @@ public class PayloadStreamer {
                 });
           }
           taos.finish();
+          }
         } catch (Throwable e) {
           error[0] = e;
         } finally {

@@ -2,12 +2,16 @@ package io.spicelabs.ginger;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
+import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -65,5 +69,37 @@ class PayloadStreamerTest {
     }
   }
 
+  @Test
+  void dirStream_version2_actuallyCompresses(@TempDir Path tempDir) throws Exception {
+    Path d = tempDir.resolve("d");
+    Files.createDirectories(d);
+    Files.writeString(d.resolve("large.txt"), "x".repeat(10000));
+
+    byte[] v1Data, v2Data;
+
+    try (InputStream in = PayloadStreamer.stream(d, BundleFormatVersion.VERSION_1)) {
+      v1Data = in.readAllBytes();
+    }
+
+    try (InputStream in = PayloadStreamer.stream(d, BundleFormatVersion.VERSION_2)) {
+      v2Data = in.readAllBytes();
+    }
+
+    assertTrue(v2Data.length < v1Data.length,
+        "V2 should be smaller: V1=" + v1Data.length + " V2=" + v2Data.length);
+
+    File zipV1 = ZipBuilder.build(Optional.empty(), Optional.empty(),
+        PayloadStreamer.stream(d, BundleFormatVersion.VERSION_1), true,
+        "test/mime", null, tempDir, BundleFormatVersion.VERSION_1);
+    File zipV2 = ZipBuilder.build(Optional.empty(), Optional.empty(),
+        PayloadStreamer.stream(d, BundleFormatVersion.VERSION_2), true,
+        "test/mime", null, tempDir, BundleFormatVersion.VERSION_2);
+
+    try (ZipFile zfV1 = new ZipFile(zipV1);
+         ZipFile zfV2 = new ZipFile(zipV2)) {
+      assertEquals("tar", new String(zfV1.getInputStream(zfV1.getEntry("payload_container_type.txt")).readAllBytes()));
+      assertEquals("tar.gz", new String(zfV2.getInputStream(zfV2.getEntry("payload_container_type.txt")).readAllBytes()));
+    }
+  }
 
 }

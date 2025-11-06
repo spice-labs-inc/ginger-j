@@ -29,6 +29,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -45,10 +46,10 @@ public class ZipBuilder {
   private static final String ENTRY_PAYLOAD = "payload.enc";
   private static final String ENTRY_TEST = "test.txt";
 
-  private static final String TYPE_TAR = "tar";
+  private static final String TYPE_TAR_V1 = "tar";
+  private static final String TYPE_TAR_V2 = "tar.gz";
   private static final String TYPE_FILE = "file";
 
-  private static final byte[] BUNDLE_VERSION = "1".getBytes();
   private static final String ZIP_EXTENSION = ".zip";
   private static final String PROP_TMPDIR = "java.io.tmpdir";
 
@@ -77,7 +78,9 @@ public class ZipBuilder {
       writeEntry(zos, ENTRY_UUID, uuid.orElse("plaintext_upload").getBytes());
       writeEntry(zos, ENTRY_DATE, Instant.now().toString().getBytes());
 
-      String containerType = payloadIsTar ? TYPE_TAR : TYPE_FILE;
+      String containerType = payloadIsTar
+          ? (version.supports(BundleFormatVersion.Feature.COMPRESS_TAR) ? TYPE_TAR_V2 : TYPE_TAR_V1)
+          : TYPE_FILE;
       writeEntry(zos, ENTRY_CONTAINER, containerType.getBytes());
 
       if (comment != null) {
@@ -119,9 +122,15 @@ public class ZipBuilder {
       writeEntry(zos, ENTRY_MIME, mimeType.getBytes());
 
       if (pubKeyPem.isPresent() && iv != null && aesKey != null) {
+        if (version.supports(BundleFormatVersion.Feature.COMPRESS_TAR)) {
+          zos.setLevel(Deflater.NO_COMPRESSION);
+        }
         zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
         CryptoUtil.aesGcmEncrypt(aesKey, iv, payloadStream, zos);
         zos.closeEntry();
+        if (version.supports(BundleFormatVersion.Feature.COMPRESS_TAR)) {
+          zos.setLevel(Deflater.DEFAULT_COMPRESSION);
+        }
       } else {
 
         zos.putNextEntry(new ZipEntry(ENTRY_PAYLOAD));
