@@ -97,7 +97,7 @@ public class Ginger implements Callable<Integer> {
   private boolean skipKey = false;
 
   @Option(names = "--bundle-format-version", description = "Bundle format version (1 or 2). Default is 1.")
-  private int bundleFormatVersion = 1;
+  private int bundleFormatVersion = 2;
 
   @Option(
       names = "--extra-args",
