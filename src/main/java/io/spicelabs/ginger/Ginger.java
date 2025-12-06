@@ -57,6 +57,7 @@ public class Ginger implements Callable<Integer> {
   private static final String CLAIM_SERVER     = "x-upload-server";
   private static final String CLAIM_UUID       = "x-uuid-project";
   private static final String CLAIM_EXP        = "exp";
+  private static final String CLAIM_CHALLENGE  = "x-challenge";
 
   //── Full mime types ─────────────────────────────────────────────────────────────
   private static final String MIME_DEPLOY  = "application/vnd.info.deployevent";
@@ -176,7 +177,21 @@ public class Ginger implements Callable<Integer> {
       return;
     }
 
-    HttpUploader.upload(server, token, bundle);
+    // Use direct upload flow - challenge is optional (null for old JWTs)
+    String challenge = resolveChallenge();
+    if (challenge != null) {
+      log.info("Using direct upload with encryption challenge verification");
+    } else {
+      log.info("Using direct upload without challenge (old JWT)");
+    }
+    DirectUploadService.uploadDirect(
+        server,
+        token,
+        pubKey.orElse(null),
+        bundle,
+        bundle.getName(),
+        challenge
+    );
   }
 
   //── Picocli entrypoint ─────────────────────────────────────────────────────────
@@ -260,6 +275,13 @@ public class Ginger implements Callable<Integer> {
     long exp = JwtUtil.getLongClaim(payloadNode, CLAIM_EXP);
     if (exp <= 0) throw new IllegalArgumentException(ERR_EXP_INVALID);
     return Instant.now().getEpochSecond() < exp;
+  }
+
+  private String resolveChallenge() throws Exception {
+    if (cachedPayloadNode == null) {
+      cachedPayloadNode = JwtUtil.decodePayload(resolveJwt());
+    }
+    return JwtUtil.getStringClaim(cachedPayloadNode, CLAIM_CHALLENGE);
   }
 
   private void processExtraArgs() {
