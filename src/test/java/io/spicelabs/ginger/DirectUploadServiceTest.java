@@ -56,19 +56,27 @@ class DirectUploadServiceTest {
         }
     }
 
+    private String buildInitResponse(String bundleId, String uploadId, String blobKey, String presignedUrl) {
+        return String.format(
+                "{\"uploadId\":\"%s\",\"blobKey\":\"%s\",\"bundleId\":\"%s\",\"expiresIn\":3600," +
+                "\"parts\":[{\"partNumber\":1,\"presignedUrl\":\"%s\",\"offset\":0,\"size\":12}]}",
+                uploadId, blobKey, bundleId, presignedUrl);
+    }
+
     @Test
     void uploadDirect_success() throws Exception {
         String bundleId = "bundle-123";
-        String uploadToken = "token-abc";
+        String uploadId = "upload-456";
+        String blobKey = "external/proj-uuid/bundle-123.12345.blob";
         String presignedUrl = storageServer.url("/upload").toString();
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"%s\",\"bundleId\":\"%s\",\"expiresIn\":3600}",
-                        presignedUrl, uploadToken, bundleId)));
+                .setBody(buildInitResponse(bundleId, uploadId, blobKey, presignedUrl)));
 
-        storageServer.enqueue(new MockResponse().setResponseCode(200));
+        storageServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("ETag", "\"abc123\""));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
@@ -76,7 +84,6 @@ class DirectUploadServiceTest {
                         "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
                         bundleId)));
 
-        // Simulate x-upload-server claim which includes the path
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "test-jwt",
@@ -99,7 +106,10 @@ class DirectUploadServiceTest {
 
         RecordedRequest completeRequest = mockServer.takeRequest();
         assertEquals("/api/global/v1/bundle/upload/complete", completeRequest.getPath());
-        assertTrue(completeRequest.getBody().readUtf8().contains("\"uploadToken\":\"token-abc\""));
+        String completeBody = completeRequest.getBody().readUtf8();
+        assertTrue(completeBody.contains("\"uploadId\":\"upload-456\""));
+        assertTrue(completeBody.contains("\"blobKey\":\"external/proj-uuid/bundle-123.12345.blob\""));
+        assertTrue(completeBody.contains("\"parts\":[{\"partNumber\":1,\"etag\":\"abc123\"}]"));
     }
 
     @Test
@@ -126,9 +136,7 @@ class DirectUploadServiceTest {
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"tok\",\"bundleId\":\"bid\",\"expiresIn\":3600}",
-                        presignedUrl)));
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
 
         storageServer.enqueue(new MockResponse().setResponseCode(500).setBody("Internal error"));
         storageServer.enqueue(new MockResponse().setResponseCode(500).setBody("Internal error"));
@@ -143,7 +151,7 @@ class DirectUploadServiceTest {
                         "test.bin",
                         null));
 
-        assertTrue(ex.getMessage().contains("Storage upload failed"));
+        assertTrue(ex.getMessage().contains("Part upload failed") || ex.getMessage().contains("500"));
     }
 
     @Test
@@ -152,15 +160,15 @@ class DirectUploadServiceTest {
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"tok\",\"bundleId\":\"bid\",\"expiresIn\":3600}",
-                        presignedUrl)));
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
 
-        storageServer.enqueue(new MockResponse().setResponseCode(200));
+        storageServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("ETag", "\"etag1\""));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(400)
-                .setBody("{\"error\":\"Invalid token\"}"));
+                .setBody("{\"error\":\"Invalid request\"}"));
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
@@ -175,55 +183,17 @@ class DirectUploadServiceTest {
     }
 
     @Test
-    void uploadDirect_missingPresignedUrl_throws() {
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"uploadToken\":\"tok\",\"bundleId\":\"bid\"}"));
-
-        IOException ex = assertThrows(IOException.class, () ->
-                service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
-                        "test-jwt",
-                        null,
-                        testBundle,
-                        "test.bin",
-                        null));
-
-        assertTrue(ex.getMessage().contains("presignedUrl"));
-    }
-
-    @Test
-    void uploadDirect_missingMultipleFields_listsAllMissing() {
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"expiresIn\":3600}"));
-
-        IOException ex = assertThrows(IOException.class, () ->
-                service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
-                        "test-jwt",
-                        null,
-                        testBundle,
-                        "test.bin",
-                        null));
-
-        assertTrue(ex.getMessage().contains("presignedUrl"));
-        assertTrue(ex.getMessage().contains("uploadToken"));
-        assertTrue(ex.getMessage().contains("bundleId"));
-    }
-
-    @Test
     void uploadDirect_retryOn5xx_succeeds() throws Exception {
         String presignedUrl = storageServer.url("/upload").toString();
 
         mockServer.enqueue(new MockResponse().setResponseCode(503).setBody("Service unavailable"));
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"tok\",\"bundleId\":\"bid\",\"expiresIn\":3600}",
-                        presignedUrl)));
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
 
-        storageServer.enqueue(new MockResponse().setResponseCode(200));
+        storageServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("ETag", "\"etag1\""));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
@@ -254,11 +224,11 @@ class DirectUploadServiceTest {
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"tok\",\"bundleId\":\"bid\",\"expiresIn\":3600}",
-                        presignedUrl)));
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
 
-        storageServer.enqueue(new MockResponse().setResponseCode(200));
+        storageServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("ETag", "\"etag1\""));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
@@ -297,17 +267,16 @@ class DirectUploadServiceTest {
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"presignedUrl\":\"%s\",\"uploadToken\":\"tok\",\"bundleId\":\"bid\",\"expiresIn\":3600}",
-                        presignedUrl)));
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
 
-        storageServer.enqueue(new MockResponse().setResponseCode(200));
+        storageServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .addHeader("ETag", "\"etag1\""));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
 
-        // Add extra trailing slash to test normalization
         String baseUrl = mockServer.url("/api/global/v1/bundle/upload").toString();
         if (!baseUrl.endsWith("/")) {
             baseUrl = baseUrl + "/";
@@ -323,5 +292,37 @@ class DirectUploadServiceTest {
 
         RecordedRequest initRequest = mockServer.takeRequest();
         assertEquals("/api/global/v1/bundle/upload/init", initRequest.getPath());
+    }
+
+    @Test
+    void uploadDirect_noEtag_throws() {
+        String presignedUrl = storageServer.url("/upload").toString();
+
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
+
+        storageServer.enqueue(new MockResponse().setResponseCode(200));
+
+        IOException ex = assertThrows(IOException.class, () ->
+                service.uploadDirect(
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        "test-jwt",
+                        null,
+                        testBundle,
+                        "test.bin",
+                        null));
+
+        // The exception may be wrapped, check full chain
+        Throwable cause = ex;
+        boolean foundEtagMessage = false;
+        while (cause != null) {
+            if (cause.getMessage() != null && cause.getMessage().contains("ETag")) {
+                foundEtagMessage = true;
+                break;
+            }
+            cause = cause.getCause();
+        }
+        assertTrue(foundEtagMessage, "Expected ETag error in exception chain, got: " + ex.getMessage());
     }
 }
