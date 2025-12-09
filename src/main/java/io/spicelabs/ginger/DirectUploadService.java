@@ -16,8 +16,8 @@ limitations under the License. */
 package io.spicelabs.ginger;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -43,6 +43,8 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okio.BufferedSink;
+import okio.Okio;
 
 public class DirectUploadService {
     private static final Logger log = LoggerFactory.getLogger(DirectUploadService.class);
@@ -194,7 +196,6 @@ public class DirectUploadService {
         long startTime = System.currentTimeMillis();
         AtomicLong lastProgressTime = new AtomicLong(startTime);
         AtomicLong lastProgressBytes = new AtomicLong(0);
-        int lastReportedPercent = -1;
 
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(PARALLEL_UPLOADS, parts.size()));
         List<Future<?>> futures = new ArrayList<>();
@@ -212,13 +213,31 @@ public class DirectUploadService {
         }
 
         executor.shutdown();
-        try {
-            for (Future<?> future : futures) {
+
+        List<Throwable> exceptions = new ArrayList<>();
+        for (Future<?> future : futures) {
+            try {
                 future.get();
+            } catch (Exception e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                exceptions.add(cause);
             }
-        } catch (Exception e) {
+        }
+
+        try {
+            if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
             executor.shutdownNow();
-            throw new IOException("Part upload failed", e.getCause());
+            Thread.currentThread().interrupt();
+        }
+
+        if (!exceptions.isEmpty()) {
+            for (int i = 1; i < exceptions.size(); i++) {
+                log.error("Additional part upload failure", exceptions.get(i));
+            }
+            throw new IOException("Part upload failed", exceptions.get(0));
         }
 
         System.out.println();
@@ -241,15 +260,40 @@ public class DirectUploadService {
             AtomicLong lastProgressTime,
             AtomicLong lastProgressBytes
     ) throws IOException {
-        byte[] data = new byte[(int) part.size()];
-        try (RandomAccessFile raf = new RandomAccessFile(bundle, "r")) {
-            raf.seek(part.offset());
-            raf.readFully(data);
-        }
+        RequestBody requestBody = new RequestBody() {
+            @Override
+            public MediaType contentType() {
+                return OCTET_STREAM;
+            }
+
+            @Override
+            public long contentLength() {
+                return part.size();
+            }
+
+            @Override
+            public void writeTo(BufferedSink sink) throws IOException {
+                try (FileInputStream fis = new FileInputStream(bundle)) {
+                    long skipped = fis.skip(part.offset());
+                    if (skipped != part.offset()) {
+                        throw new IOException("Failed to skip to offset " + part.offset());
+                    }
+                    byte[] buffer = new byte[8192];
+                    long remaining = part.size();
+                    while (remaining > 0) {
+                        int toRead = (int) Math.min(buffer.length, remaining);
+                        int read = fis.read(buffer, 0, toRead);
+                        if (read == -1) break;
+                        sink.write(buffer, 0, read);
+                        remaining -= read;
+                    }
+                }
+            }
+        };
 
         Supplier<Request> requestSupplier = () -> new Request.Builder()
                 .url(part.presignedUrl())
-                .put(RequestBody.create(data, OCTET_STREAM))
+                .put(requestBody)
                 .addHeader("Content-Type", "application/octet-stream")
                 .build();
 
@@ -271,7 +315,7 @@ public class DirectUploadService {
         }
     }
 
-    private synchronized void reportProgress(
+    private void reportProgress(
             long bytesUploaded,
             long totalSize,
             long startTime,
@@ -281,24 +325,27 @@ public class DirectUploadService {
         int percent = (int) ((bytesUploaded * 100) / totalSize);
         int step = percent / 10;
 
-        System.out.print(".");
-        System.out.flush();
+        synchronized (System.out) {
+            System.out.print(".");
+            System.out.flush();
+        }
 
         if (step > 0 && step % 2 == 0) {
             long now = System.currentTimeMillis();
             long elapsed = now - startTime;
             String avgSpeed = elapsed > 0 ? formatBytes((bytesUploaded * 1000) / elapsed) + "/s" : "N/A";
 
-            long intervalElapsed = now - lastProgressTime.get();
-            long intervalBytes = bytesUploaded - lastProgressBytes.get();
+            long prevTime = lastProgressTime.getAndSet(now);
+            long prevBytes = lastProgressBytes.getAndSet(bytesUploaded);
+            long intervalElapsed = now - prevTime;
+            long intervalBytes = bytesUploaded - prevBytes;
             String intervalSpeed = intervalElapsed > 0
                     ? formatBytes((intervalBytes * 1000) / intervalElapsed) + "/s"
                     : "N/A";
 
-            lastProgressTime.set(now);
-            lastProgressBytes.set(bytesUploaded);
-
-            System.out.println();
+            synchronized (System.out) {
+                System.out.println();
+            }
             log.info("Upload progress: {}% ({} / {}) @ {} (avg: {})",
                     percent, formatBytes(bytesUploaded), formatBytes(totalSize), intervalSpeed, avgSpeed);
         }
@@ -346,6 +393,8 @@ public class DirectUploadService {
 
     private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName) throws IOException {
         IOException lastException = null;
+        String lastResponseBody = null;
+        int lastCode = 0;
         long backoffMs = INITIAL_BACKOFF_MS;
 
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -357,18 +406,16 @@ public class DirectUploadService {
                     return response;
                 }
 
-                String body = response.body() != null ? response.body().string() : "";
-                int code = response.code();
+                lastResponseBody = response.body() != null ? response.body().string() : "";
+                lastCode = response.code();
                 response.close();
                 response = null;
 
                 if (attempt < MAX_RETRIES) {
                     log.warn("{} failed with {} (attempt {}/{}), retrying in {}ms",
-                            operationName, code, attempt, MAX_RETRIES, backoffMs);
+                            operationName, lastCode, attempt, MAX_RETRIES, backoffMs);
                     TimeUnit.MILLISECONDS.sleep(backoffMs);
                     backoffMs *= 2;
-                } else {
-                    throw new IOException(operationName + " failed after " + MAX_RETRIES + " attempts: " + code);
                 }
             } catch (IOException e) {
                 if (response != null) response.close();
@@ -391,7 +438,9 @@ public class DirectUploadService {
             }
         }
 
-        throw lastException != null ? lastException :
-                new IOException(operationName + " failed after " + MAX_RETRIES + " attempts");
+        if (lastException != null) {
+            throw lastException;
+        }
+        throw new IOException(operationName + " failed after " + MAX_RETRIES + " attempts: " + lastCode + " " + lastResponseBody);
     }
 }
