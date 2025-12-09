@@ -76,8 +76,9 @@ class DirectUploadServiceTest {
                         "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
                         bundleId)));
 
+        // Simulate x-upload-server claim which includes the path
         service.uploadDirect(
-                mockServer.url("/").toString(),
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -109,7 +110,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "bad-jwt",
                         null,
                         testBundle,
@@ -135,7 +136,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -163,7 +164,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -181,7 +182,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -199,7 +200,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -229,7 +230,7 @@ class DirectUploadServiceTest {
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
 
         service.uploadDirect(
-                mockServer.url("/").toString(),
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -264,7 +265,7 @@ class DirectUploadServiceTest {
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
 
         service.uploadDirect(
-                mockServer.url("/").toString(),
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "test-jwt",
                 publicKeyPem,
                 testBundle,
@@ -280,7 +281,7 @@ class DirectUploadServiceTest {
     void uploadDirect_challengeWithoutPublicKey_throws() {
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/").toString(),
+                        mockServer.url("/api/global/v1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -307,7 +308,7 @@ class DirectUploadServiceTest {
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
 
         // Add extra trailing slash to test normalization
-        String baseUrl = mockServer.url("").toString();
+        String baseUrl = mockServer.url("/api/global/v1/bundle/upload").toString();
         if (!baseUrl.endsWith("/")) {
             baseUrl = baseUrl + "/";
         }
