@@ -224,15 +224,6 @@ public class DirectUploadService {
             }
         }
 
-        try {
-            if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-
         if (!exceptions.isEmpty()) {
             for (int i = 1; i < exceptions.size(); i++) {
                 log.error("Additional part upload failure", exceptions.get(i));
