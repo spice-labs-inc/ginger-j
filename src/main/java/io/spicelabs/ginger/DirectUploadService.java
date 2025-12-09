@@ -196,6 +196,8 @@ public class DirectUploadService {
         long startTime = System.currentTimeMillis();
         AtomicLong lastProgressTime = new AtomicLong(startTime);
         AtomicLong lastProgressBytes = new AtomicLong(0);
+        AtomicLong lastDotStep = new AtomicLong(-1);
+        AtomicLong lastLogStep = new AtomicLong(0);
 
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(PARALLEL_UPLOADS, parts.size()));
         List<Future<?>> futures = new ArrayList<>();
@@ -204,7 +206,7 @@ public class DirectUploadService {
             futures.add(executor.submit(() -> {
                 try {
                     String etag = uploadPart(bundle, part, totalSize, totalBytesUploaded,
-                            startTime, lastProgressTime, lastProgressBytes);
+                            startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
                     etags.put(part.partNumber(), etag);
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to upload part " + part.partNumber(), e);
@@ -249,8 +251,11 @@ public class DirectUploadService {
             AtomicLong totalBytesUploaded,
             long startTime,
             AtomicLong lastProgressTime,
-            AtomicLong lastProgressBytes
+            AtomicLong lastProgressBytes,
+            AtomicLong lastDotStep,
+            AtomicLong lastLogStep
     ) throws IOException {
+        long progressIntervalBytes = Math.max(totalSize / 50, 8192); // 2% of total, min 8KB
         RequestBody requestBody = new RequestBody() {
             @Override
             public MediaType contentType() {
@@ -271,12 +276,24 @@ public class DirectUploadService {
                     }
                     byte[] buffer = new byte[8192];
                     long remaining = part.size();
+                    long bytesSinceLastUpdate = 0;
                     while (remaining > 0) {
                         int toRead = (int) Math.min(buffer.length, remaining);
                         int read = fis.read(buffer, 0, toRead);
                         if (read == -1) break;
                         sink.write(buffer, 0, read);
                         remaining -= read;
+                        bytesSinceLastUpdate += read;
+
+                        if (bytesSinceLastUpdate >= progressIntervalBytes) {
+                            long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
+                            bytesSinceLastUpdate = 0;
+                            reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
+                        }
+                    }
+                    if (bytesSinceLastUpdate > 0) {
+                        long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
+                        reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
                     }
                 }
             }
@@ -299,9 +316,6 @@ public class DirectUploadService {
                 throw new IOException("No ETag in response for part " + part.partNumber());
             }
 
-            long uploaded = totalBytesUploaded.addAndGet(part.size());
-            reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes);
-
             return etag.replace("\"", "");
         }
     }
@@ -311,17 +325,24 @@ public class DirectUploadService {
             long totalSize,
             long startTime,
             AtomicLong lastProgressTime,
-            AtomicLong lastProgressBytes
+            AtomicLong lastProgressBytes,
+            AtomicLong lastDotStep,
+            AtomicLong lastLogStep
     ) {
         int percent = (int) ((bytesUploaded * 100) / totalSize);
-        int step = percent / 10;
+        int dotStep = percent / 2;  // every 2%
+        int logStep = percent / 20; // every 20%
 
-        synchronized (System.out) {
-            System.out.print(".");
-            System.out.flush();
+        long prevDotStep = lastDotStep.get();
+        if (dotStep > prevDotStep && lastDotStep.compareAndSet(prevDotStep, dotStep)) {
+            synchronized (System.out) {
+                System.out.print(".");
+                System.out.flush();
+            }
         }
 
-        if (step > 0 && step % 2 == 0) {
+        long prevLogStep = lastLogStep.get();
+        if (logStep > prevLogStep && lastLogStep.compareAndSet(prevLogStep, logStep)) {
             long now = System.currentTimeMillis();
             long elapsed = now - startTime;
             String avgSpeed = elapsed > 0 ? formatBytes((bytesUploaded * 1000) / elapsed) + "/s" : "N/A";
@@ -338,7 +359,7 @@ public class DirectUploadService {
                 System.out.println();
             }
             log.info("Upload progress: {}% ({} / {}) @ {} (avg: {})",
-                    percent, formatBytes(bytesUploaded), formatBytes(totalSize), intervalSpeed, avgSpeed);
+                    logStep * 20, formatBytes(bytesUploaded), formatBytes(totalSize), intervalSpeed, avgSpeed);
         }
     }
 
