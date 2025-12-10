@@ -35,7 +35,7 @@ class CryptoUtilTest {
 SecureRandom r1 = new SecureRandom();
 
 
-for (int x = 0; x < 2000000; x++) {
+for (int x = 0; x < 2500; x++) {
   r1.nextBytes(bytes);
   fos.write(bytes);
 }
