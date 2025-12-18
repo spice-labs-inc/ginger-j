@@ -93,7 +93,7 @@ jobs:
         uses: spice-labs-inc/action-spice-labs-surveyor@v4
         with:
           spice_pass: "${{ secrets.SPICE_PASS }}"
-          input: "./target"
+          input: "${{ github.workspace }}"
           tag: "${{ github.event.repository.name }}"
 
   notify:
