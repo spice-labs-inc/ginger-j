@@ -256,6 +256,8 @@ public class DirectUploadService {
             AtomicLong lastLogStep
     ) throws IOException {
         long progressIntervalBytes = Math.max(totalSize / 50, 8192); // 2% of total, min 8KB
+        AtomicLong attemptBytesUploaded = new AtomicLong(0);
+
         RequestBody requestBody = new RequestBody() {
             @Override
             public MediaType contentType() {
@@ -269,6 +271,8 @@ public class DirectUploadService {
 
             @Override
             public void writeTo(BufferedSink sink) throws IOException {
+                // Reset attempt counter at start of each attempt
+                attemptBytesUploaded.set(0);
                 try (FileInputStream fis = new FileInputStream(bundle)) {
                     long skipped = fis.skip(part.offset());
                     if (skipped != part.offset()) {
@@ -287,15 +291,24 @@ public class DirectUploadService {
 
                         if (bytesSinceLastUpdate >= progressIntervalBytes) {
                             long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
+                            attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
                             bytesSinceLastUpdate = 0;
                             reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
                         }
                     }
                     if (bytesSinceLastUpdate > 0) {
                         long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
+                        attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
                         reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
                     }
                 }
+            }
+        };
+
+        Runnable onRetry = () -> {
+            long bytesToSubtract = attemptBytesUploaded.getAndSet(0);
+            if (bytesToSubtract > 0) {
+                totalBytesUploaded.addAndGet(-bytesToSubtract);
             }
         };
 
@@ -305,7 +318,7 @@ public class DirectUploadService {
                 .addHeader("Content-Type", "application/octet-stream")
                 .build();
 
-        try (Response response = executeWithRetry(requestSupplier, "Part " + part.partNumber())) {
+        try (Response response = executeWithRetry(requestSupplier, "Part " + part.partNumber(), onRetry)) {
             if (!response.isSuccessful()) {
                 String body = response.body() != null ? response.body().string() : "";
                 throw new IOException("Part upload failed: " + response.code() + " " + body);
@@ -404,6 +417,10 @@ public class DirectUploadService {
     }
 
     private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName) throws IOException {
+        return executeWithRetry(requestSupplier, operationName, null);
+    }
+
+    private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName, Runnable onRetry) throws IOException {
         IOException lastException = null;
         String lastResponseBody = null;
         int lastCode = 0;
@@ -426,6 +443,9 @@ public class DirectUploadService {
                 if (attempt < MAX_RETRIES) {
                     log.warn("{} failed with {} (attempt {}/{}), retrying in {}ms",
                             operationName, lastCode, attempt, MAX_RETRIES, backoffMs);
+                    if (onRetry != null) {
+                        onRetry.run();
+                    }
                     TimeUnit.MILLISECONDS.sleep(backoffMs);
                     backoffMs *= 2;
                 }
@@ -435,6 +455,9 @@ public class DirectUploadService {
                 if (attempt < MAX_RETRIES) {
                     log.warn("{} failed (attempt {}/{}), retrying in {}ms: {}",
                             operationName, attempt, MAX_RETRIES, backoffMs, e.getMessage());
+                    if (onRetry != null) {
+                        onRetry.run();
+                    }
                     try {
                         TimeUnit.MILLISECONDS.sleep(backoffMs);
                     } catch (InterruptedException ie) {
