@@ -80,6 +80,7 @@ public class DirectUploadService {
             String uploadId,
             String blobKey,
             String bundleId,
+            String jobId,
             int expiresIn,
             List<PartInfo> parts
     ) {}
@@ -96,7 +97,7 @@ public class DirectUploadService {
 
     private record InitRequest(String sha256, long sizeBytes, String filename, String encryptedChallenge) {}
 
-    private record CompleteRequest(String uploadId, String blobKey, String sha256, List<CompletedPart> parts) {}
+    private record CompleteRequest(String jobId, String uploadId, String blobKey, String sha256, List<CompletedPart> parts) {}
 
     private record CompletedPart(int partNumber, String etag) {}
 
@@ -128,13 +129,14 @@ public class DirectUploadService {
         log.info("Starting direct upload: {} bytes, SHA256: {}", sizeBytes, sha256);
 
         InitResponse initResponse = initUpload(baseUrl, jwt, publicKeyPem, sha256, sizeBytes, filename, challenge);
-        log.info("Initialized multipart upload: {} parts, bundleId={}",
-                initResponse.parts().size(), initResponse.bundleId());
+        String jobId = initResponse.jobId();
+        log.info("Initialized multipart upload: {} parts, bundleId={}, jobId={}",
+                initResponse.parts().size(), initResponse.bundleId(), jobId);
 
-        List<CompletedPart> completedParts = uploadParts(bundle, initResponse.parts());
+        List<CompletedPart> completedParts = uploadParts(bundle, initResponse.parts(), baseUrl, jwt, jobId);
 
         CompleteResponse completeResponse = completeUpload(
-                baseUrl, jwt, initResponse.uploadId(), initResponse.blobKey(), sha256, completedParts);
+                baseUrl, jwt, jobId, initResponse.uploadId(), initResponse.blobKey(), sha256, completedParts);
         log.info("Upload complete: status={}, bundleId={}, sha256={}",
                 completeResponse.status(), completeResponse.bundleId(), sha256);
     }
@@ -187,7 +189,7 @@ public class DirectUploadService {
         }
     }
 
-    private List<CompletedPart> uploadParts(File bundle, List<PartInfo> parts) throws IOException {
+    private List<CompletedPart> uploadParts(File bundle, List<PartInfo> parts, String baseUrl, String jwt, String jobId) throws IOException {
         long totalSize = bundle.length();
         log.info("Uploading {} to Spice Labs Secure Project Storage...", formatBytes(totalSize));
 
@@ -202,12 +204,21 @@ public class DirectUploadService {
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(PARALLEL_UPLOADS, parts.size()));
         List<Future<?>> futures = new ArrayList<>();
 
+        AtomicLong lastServerReportStep = new AtomicLong(0);
+
         for (PartInfo part : parts) {
             futures.add(executor.submit(() -> {
                 try {
                     String etag = uploadPart(bundle, part, totalSize, totalBytesUploaded,
                             startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
                     etags.put(part.partNumber(), etag);
+
+                    int percent = (int) ((totalBytesUploaded.get() * 100) / totalSize);
+                    int reportStep = percent / 20;
+                    long prevStep = lastServerReportStep.get();
+                    if (reportStep > prevStep && lastServerReportStep.compareAndSet(prevStep, reportStep)) {
+                        reportProgressToServer(baseUrl, jwt, jobId, reportStep * 20);
+                    }
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to upload part " + part.partNumber(), e);
                 }
@@ -308,7 +319,11 @@ public class DirectUploadService {
         Runnable onRetry = () -> {
             long bytesToSubtract = attemptBytesUploaded.getAndSet(0);
             if (bytesToSubtract > 0) {
-                totalBytesUploaded.addAndGet(-bytesToSubtract);
+                long newTotal = totalBytesUploaded.addAndGet(-bytesToSubtract);
+                // Reset progress step counters to match new total
+                int newPercent = (int) ((newTotal * 100) / totalSize);
+                lastDotStep.set(newPercent / 2);  // dots every 2%
+                lastLogStep.set(newPercent / 20); // logs every 20%
             }
         };
 
@@ -379,6 +394,7 @@ public class DirectUploadService {
     private CompleteResponse completeUpload(
             String baseUrl,
             String jwt,
+            String jobId,
             String uploadId,
             String blobKey,
             String sha256,
@@ -386,7 +402,7 @@ public class DirectUploadService {
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/complete";
 
-        CompleteRequest completeRequest = new CompleteRequest(uploadId, blobKey, sha256, parts);
+        CompleteRequest completeRequest = new CompleteRequest(jobId, uploadId, blobKey, sha256, parts);
         String jsonBody = MAPPER.writeValueAsString(completeRequest);
 
         Supplier<Request> requestSupplier = () -> new Request.Builder()
@@ -402,6 +418,29 @@ public class DirectUploadService {
                 throw new IOException("Failed to complete upload: " + response.code() + " " + responseBody);
             }
             return MAPPER.readValue(responseBody, CompleteResponse.class);
+        }
+    }
+
+    private void reportProgressToServer(String baseUrl, String jwt, String jobId, int progress) {
+        if (jobId == null || jobId.isEmpty()) return;
+        try {
+            String url = normalizeUrl(baseUrl) + "/progress";
+            String jsonBody = MAPPER.writeValueAsString(
+                    java.util.Map.of("jobId", jobId, "progress", progress));
+            Request request = new Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer " + jwt)
+                    .addHeader("Content-Type", "application/json")
+                    .put(RequestBody.create(jsonBody, JSON))
+                    .build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    log.debug("Progress report failed: {} {}", response.code(),
+                            response.body() != null ? response.body().string() : "");
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to report progress to server: {}", e.getMessage());
         }
     }
 
