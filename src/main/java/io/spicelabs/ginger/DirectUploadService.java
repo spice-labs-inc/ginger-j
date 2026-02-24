@@ -393,10 +393,10 @@ public class DirectUploadService {
                     logStep * 20, formatBytes(bytesUploaded), formatBytes(totalSize), intervalSpeed, avgSpeed);
         }
 
-        int serverStep = percent / 5; // every 5%
+        int serverStep = percent / 2; // every 2%, aligned with CLI dots
         long prevServerStep = lastServerReportStep.get();
         if (serverStep > prevServerStep && lastServerReportStep.compareAndSet(prevServerStep, serverStep)) {
-            reportProgressToServer(baseUrl, jwt, jobId, serverStep * 5);
+            reportProgressToServer(baseUrl, jwt, jobId, serverStep * 2);
         }
     }
 
@@ -432,25 +432,27 @@ public class DirectUploadService {
 
     private void reportProgressToServer(String baseUrl, String jwt, String jobId, int progress) {
         if (jobId == null || jobId.isEmpty()) return;
-        try {
-            String url = normalizeUrl(baseUrl) + "/progress";
-            String jsonBody = MAPPER.writeValueAsString(
-                    java.util.Map.of("jobId", jobId, "progress", progress));
-            Request request = new Request.Builder()
-                    .url(url)
-                    .addHeader("Authorization", "Bearer " + jwt)
-                    .addHeader("Content-Type", "application/json")
-                    .put(RequestBody.create(jsonBody, JSON))
-                    .build();
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    log.debug("Progress report failed: {} {}", response.code(),
-                            response.body() != null ? response.body().string() : "");
+        Thread.startVirtualThread(() -> {
+            try {
+                String url = normalizeUrl(baseUrl) + "/progress";
+                String jsonBody = MAPPER.writeValueAsString(
+                        java.util.Map.of("jobId", jobId, "progress", progress));
+                Request request = new Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer " + jwt)
+                        .addHeader("Content-Type", "application/json")
+                        .put(RequestBody.create(jsonBody, JSON))
+                        .build();
+                try (Response response = client.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        log.debug("Progress report failed: {} {}", response.code(),
+                                response.body() != null ? response.body().string() : "");
+                    }
                 }
+            } catch (Exception e) {
+                log.debug("Failed to report progress to server: {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.debug("Failed to report progress to server: {}", e.getMessage());
-        }
+        });
     }
 
     private static String normalizeUrl(String url) {
