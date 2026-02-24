@@ -200,25 +200,18 @@ public class DirectUploadService {
         AtomicLong lastProgressBytes = new AtomicLong(0);
         AtomicLong lastDotStep = new AtomicLong(-1);
         AtomicLong lastLogStep = new AtomicLong(0);
+        AtomicLong lastServerReportStep = new AtomicLong(0);
 
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(PARALLEL_UPLOADS, parts.size()));
         List<Future<?>> futures = new ArrayList<>();
-
-        AtomicLong lastServerReportStep = new AtomicLong(0);
 
         for (PartInfo part : parts) {
             futures.add(executor.submit(() -> {
                 try {
                     String etag = uploadPart(bundle, part, totalSize, totalBytesUploaded,
-                            startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
+                            startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep,
+                            lastServerReportStep, baseUrl, jwt, jobId);
                     etags.put(part.partNumber(), etag);
-
-                    int percent = (int) ((totalBytesUploaded.get() * 100) / totalSize);
-                    int reportStep = percent / 20;
-                    long prevStep = lastServerReportStep.get();
-                    if (reportStep > prevStep && lastServerReportStep.compareAndSet(prevStep, reportStep)) {
-                        reportProgressToServer(baseUrl, jwt, jobId, reportStep * 20);
-                    }
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to upload part " + part.partNumber(), e);
                 }
@@ -264,7 +257,11 @@ public class DirectUploadService {
             AtomicLong lastProgressTime,
             AtomicLong lastProgressBytes,
             AtomicLong lastDotStep,
-            AtomicLong lastLogStep
+            AtomicLong lastLogStep,
+            AtomicLong lastServerReportStep,
+            String baseUrl,
+            String jwt,
+            String jobId
     ) throws IOException {
         long progressIntervalBytes = Math.max(totalSize / 50, 8192); // 2% of total, min 8KB
         AtomicLong attemptBytesUploaded = new AtomicLong(0);
@@ -304,13 +301,15 @@ public class DirectUploadService {
                             long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
                             attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
                             bytesSinceLastUpdate = 0;
-                            reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
+                            reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes,
+                                    lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId);
                         }
                     }
                     if (bytesSinceLastUpdate > 0) {
                         long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
                         attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
-                        reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep);
+                        reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes,
+                                lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId);
                     }
                 }
             }
@@ -355,7 +354,11 @@ public class DirectUploadService {
             AtomicLong lastProgressTime,
             AtomicLong lastProgressBytes,
             AtomicLong lastDotStep,
-            AtomicLong lastLogStep
+            AtomicLong lastLogStep,
+            AtomicLong lastServerReportStep,
+            String baseUrl,
+            String jwt,
+            String jobId
     ) {
         int percent = (int) ((bytesUploaded * 100) / totalSize);
         int dotStep = percent / 2;  // every 2%
@@ -388,6 +391,12 @@ public class DirectUploadService {
             }
             log.info("Upload progress: {}% ({} / {}) @ {} (avg: {})",
                     logStep * 20, formatBytes(bytesUploaded), formatBytes(totalSize), intervalSpeed, avgSpeed);
+        }
+
+        int serverStep = percent / 5; // every 5%
+        long prevServerStep = lastServerReportStep.get();
+        if (serverStep > prevServerStep && lastServerReportStep.compareAndSet(prevServerStep, serverStep)) {
+            reportProgressToServer(baseUrl, jwt, jobId, serverStep * 5);
         }
     }
 
