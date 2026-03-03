@@ -174,9 +174,12 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
+        // Complete and progress report can arrive in any order since progress
+        // is fire-and-forget on a virtual thread. Enqueue 400 for both so the
+        // complete request always gets 400 regardless of ordering.
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(400)
+                .setBody("{\"error\":\"Invalid request\"}"));
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(400)
                 .setBody("{\"error\":\"Invalid request\"}"));
