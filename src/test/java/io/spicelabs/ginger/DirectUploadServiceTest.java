@@ -58,7 +58,7 @@ class DirectUploadServiceTest {
 
     private String buildInitResponse(String bundleId, String uploadId, String blobKey, String presignedUrl) {
         return String.format(
-                "{\"uploadId\":\"%s\",\"blobKey\":\"%s\",\"bundleId\":\"%s\",\"expiresIn\":3600," +
+                "{\"uploadId\":\"%s\",\"blobKey\":\"%s\",\"bundleId\":\"%s\",\"jobId\":\"job-789\",\"expiresIn\":3600," +
                 "\"parts\":[{\"partNumber\":1,\"presignedUrl\":\"%s\",\"offset\":0,\"size\":12}]}",
                 uploadId, blobKey, bundleId, presignedUrl);
     }
@@ -78,6 +78,9 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"abc123\""));
 
+        // Progress report (best-effort, may or may not be sent for small files)
+        mockServer.enqueue(new MockResponse().setResponseCode(200));
+
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
                 .setBody(String.format(
@@ -92,7 +95,6 @@ class DirectUploadServiceTest {
                 "test.bin",
                 null);
 
-        assertEquals(2, mockServer.getRequestCount());
         assertEquals(1, storageServer.getRequestCount());
 
         RecordedRequest initRequest = mockServer.takeRequest();
@@ -104,12 +106,18 @@ class DirectUploadServiceTest {
         assertEquals("/upload", storageRequest.getPath());
         assertEquals("PUT", storageRequest.getMethod());
 
-        RecordedRequest completeRequest = mockServer.takeRequest();
-        assertEquals("/api/global/v1/bundle/upload/complete", completeRequest.getPath());
-        String completeBody = completeRequest.getBody().readUtf8();
+        // Drain remaining requests to find the complete request
+        RecordedRequest req;
+        String completeBody = null;
+        while ((req = mockServer.takeRequest(1, TimeUnit.SECONDS)) != null) {
+            if (req.getPath().equals("/api/global/v1/bundle/upload/complete")) {
+                completeBody = req.getBody().readUtf8();
+            }
+        }
+        assertNotNull(completeBody, "Should have received complete request");
         assertTrue(completeBody.contains("\"uploadId\":\"upload-456\""));
         assertTrue(completeBody.contains("\"blobKey\":\"external/proj-uuid/bundle-123.12345.blob\""));
-        assertTrue(completeBody.contains("\"parts\":[{\"partNumber\":1,\"etag\":\"abc123\"}]"));
+        assertTrue(completeBody.contains("\"jobId\":\"job-789\""));
     }
 
     @Test
@@ -166,6 +174,12 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
+        // Complete and progress report can arrive in any order since progress
+        // is fire-and-forget on a virtual thread. Enqueue 400 for both so the
+        // complete request always gets 400 regardless of ordering.
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(400)
+                .setBody("{\"error\":\"Invalid request\"}"));
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(400)
                 .setBody("{\"error\":\"Invalid request\"}"));
@@ -195,6 +209,9 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
+        // Progress report (best-effort)
+        mockServer.enqueue(new MockResponse().setResponseCode(200));
+
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
@@ -206,8 +223,6 @@ class DirectUploadServiceTest {
                 testBundle,
                 "test.bin",
                 null);
-
-        assertEquals(3, mockServer.getRequestCount());
     }
 
     @Test
@@ -229,6 +244,9 @@ class DirectUploadServiceTest {
         storageServer.enqueue(new MockResponse()
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
+
+        // Progress report (best-effort)
+        mockServer.enqueue(new MockResponse().setResponseCode(200));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
@@ -272,6 +290,9 @@ class DirectUploadServiceTest {
         storageServer.enqueue(new MockResponse()
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
+
+        // Progress report (best-effort)
+        mockServer.enqueue(new MockResponse().setResponseCode(200));
 
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(200)
