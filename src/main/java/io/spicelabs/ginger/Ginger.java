@@ -100,6 +100,9 @@ public class Ginger implements Callable<Integer> {
   @Option(names = "--bundle-format-version", description = "Bundle format version (1 or 2). Default is 1.")
   private int bundleFormatVersion = 2;
 
+  @Option(names = "--target-chunk-size", description = "Target chunk size in MB for uploads (default: 64MB)")
+  private Integer targetChunkSizeMB;
+
   @Option(
       names = "--extra-args",
       description = "Additional Ginger builder args in key=value format (e.g. --extra-args=\"--skip-key,--encrypt-only\")",
@@ -122,6 +125,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger comment(String c) { this.comment = c; return this; }
   public Ginger outputDir(Path d) { this.outputDir = d; return this; }
   public Ginger bundleFormatVersion(int v) { this.bundleFormatVersion = v; return this; }
+  public Ginger targetChunkSizeMB(Integer sizeMB) { this.targetChunkSizeMB = sizeMB; return this; }
   public Ginger extraArgs(Map<String, String> args) { this.extraArgs = args; return this; }
 
   /**
@@ -184,13 +188,22 @@ public class Ginger implements Callable<Integer> {
     } else {
       log.info("Using direct upload without challenge (old JWT)");
     }
+    
+    // Convert chunk size from MB to bytes
+    Long targetChunkSizeBytes = null;
+    if (targetChunkSizeMB != null && targetChunkSizeMB > 0) {
+      targetChunkSizeBytes = targetChunkSizeMB.longValue() * 1024 * 1024;
+      log.info("Using target chunk size: {}MB ({} bytes)", targetChunkSizeMB, targetChunkSizeBytes);
+    }
+    
     new DirectUploadService().uploadDirect(
         server,
         token,
         pubKey.orElse(null),
         bundle,
         bundle.getName(),
-        challenge
+        challenge,
+        targetChunkSizeBytes
     );
   }
 
@@ -391,6 +404,17 @@ public class Ginger implements Callable<Integer> {
            this.bundleFormatVersion = Integer.parseInt(value);
          }
 
+         case "--target-chunk-size" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--target-chunk-size requires a value (MB)");
+           }
+           try {
+             this.targetChunkSizeMB = Integer.parseInt(value);
+           } catch (NumberFormatException e) {
+             throw new IllegalArgumentException("--target-chunk-size must be a valid integer (MB)");
+           }
+         }
+
          default -> log.warn("Unknown extra arg: {}", arg);
        }
      }
@@ -400,7 +424,7 @@ public class Ginger implements Callable<Integer> {
     return switch (key) {
       case "--jwt", "-j", "--uuid", "--adg", "--deployment-events",
            "--output", "--comment", "--comment-no-sensitive-info",
-           "--bundle-format-version" -> true;
+           "--bundle-format-version", "--target-chunk-size" -> true;
       default -> false;
     };
   }
