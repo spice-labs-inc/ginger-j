@@ -90,11 +90,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Index and Upload ADG
-        uses: spice-labs-inc/action-spice-labs-surveyor@v4
+        uses: spice-labs-inc/action-spice-labs-surveyor@v5
         with:
           spice_pass: "${{ secrets.SPICE_PASS }}"
           input: "${{ github.workspace }}"
-          tag: "${{ github.event.repository.name }}"
+          subject: "${{ github.event.repository.name }}"
 
   notify:
     needs: [publish]
