@@ -174,7 +174,7 @@ public class Ginger implements Callable<Integer> {
         mime, comment, outDir, version
     );
 
-    log.warn("Important! SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
+    log.info("SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
 
     if (encryptOnly) {
       log.info("Wrote encrypted file to {}", bundle);
