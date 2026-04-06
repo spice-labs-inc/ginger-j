@@ -487,11 +487,11 @@ public class Ginger implements Callable<Integer> {
   public byte[] downloadRuntimeConfigBytes() throws Exception {
     Security.addProvider(new BouncyCastleProvider());
     String token = resolveJwt();
-    String server = resolveServerUrl();
-
-    String url = server;
+    String uploadUrl = resolveServerUrl();
+    // Append runtime-config to the upload URL path (same auth as upload endpoints)
+    String url = uploadUrl;
     if (!url.endsWith("/")) url += "/";
-    url += "api/project/v1/survey/runtime/config";
+    url += "runtime-config";
 
     okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -505,7 +505,12 @@ public class Ginger implements Callable<Integer> {
         .build();
 
     try (okhttp3.Response response = client.newCall(request).execute()) {
-      if (!response.isSuccessful() || response.body() == null) {
+      if (!response.isSuccessful()) {
+        log.error("Probe config download failed: HTTP {} from {}", response.code(), url);
+        return null;
+      }
+      if (response.body() == null) {
+        log.error("Probe config download: empty response body");
         return null;
       }
       return response.body().bytes();
