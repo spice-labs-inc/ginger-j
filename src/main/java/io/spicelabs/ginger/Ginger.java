@@ -89,6 +89,7 @@ public class Ginger implements Callable<Integer> {
 
   @Option(names = "--runtime-survey", description = "JSON file containing runtime survey data")
   private Path runtimeSurveyFile;
+  private String runtimeSubject;
 
   @Option(names = {"-e", "--encrypt-only"}, description = "Only encrypt; do not upload")
   private boolean encryptOnly;
@@ -126,6 +127,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger adgDir(Path adgDir) { this.adgDir = adgDir; return this; }
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
   public Ginger runtimeSurveyFile(Path f) { this.runtimeSurveyFile = f; return this; }
+  public Ginger runtimeSubject(String s) { this.runtimeSubject = s; return this; }
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
@@ -205,6 +207,12 @@ public class Ginger implements Callable<Integer> {
       log.info("Using target chunk size: {}MB ({} bytes)", targetChunkSizeMB, targetChunkSizeBytes);
     }
     
+    java.util.Map<String, Object> initMetadata = null;
+    if (runtimeSubject != null) {
+      initMetadata = new java.util.HashMap<>();
+      initMetadata.put("tag", runtimeSubject);
+    }
+
     new DirectUploadService().uploadDirect(
         server,
         token,
@@ -213,7 +221,8 @@ public class Ginger implements Callable<Integer> {
         bundle.getName(),
         challenge,
         targetChunkSizeBytes,
-        mime
+        mime,
+        initMetadata
     );
   }
 
