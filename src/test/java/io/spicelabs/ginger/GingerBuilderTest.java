@@ -60,12 +60,31 @@ class GingerBuilderTest {
   }
 
   @Test
-  void bothInputs_throws() {
+  void bothInputs_adgAndEvents_throws() {
     assertThrows(Exception.class, () -> Ginger.builder()
         .jwt(jwt)
         .adgDir(adgDir)
         .deploymentEventsFile(eventsFile)
         .run(), "Must throw if both inputs are set");
+  }
+
+  @Test
+  void bothInputs_adgAndRuntimeSurvey_throws() {
+    assertThrows(Exception.class, () -> Ginger.builder()
+        .jwt(jwt)
+        .adgDir(adgDir)
+        .runtimeSurveyFile(eventsFile)
+        .run(), "Must throw if both inputs are set");
+  }
+
+  @Test
+  void allThreeInputs_throws() {
+    assertThrows(Exception.class, () -> Ginger.builder()
+        .jwt(jwt)
+        .adgDir(adgDir)
+        .deploymentEventsFile(eventsFile)
+        .runtimeSurveyFile(eventsFile)
+        .run(), "Must throw if all three inputs are set");
   }
 
   @Test
@@ -94,6 +113,38 @@ class GingerBuilderTest {
       long zips = files.filter(p -> p.toString().endsWith(".zip")).count();
       assertEquals(1, zips);
     }
+  }
+
+  @Test
+  void encryptOnly_runtimeSurvey_succeeds_andCreatesZip() throws Exception {
+    Path surveyFile = tmp.resolve("survey.json");
+    Files.writeString(surveyFile, "{\"type\":\"runtime-pqc-survey\",\"subject\":\"test\"}",
+        StandardCharsets.UTF_8);
+
+    Ginger.builder()
+        .jwt(jwt)
+        .runtimeSurveyFile(surveyFile)
+        .encryptOnly(true)
+        .run();
+
+    try (Stream<Path> files = Files.walk(tmp)) {
+      long zips = files.filter(p -> p.toString().endsWith(".zip")).count();
+      assertEquals(1, zips);
+    }
+  }
+
+  @Test
+  void runtimeSurveyOnly_noOtherInputs_accepted() throws Exception {
+    Path surveyFile = tmp.resolve("survey.json");
+    Files.writeString(surveyFile, "{\"type\":\"runtime-pqc-survey\"}",
+        StandardCharsets.UTF_8);
+
+    // Should not throw during validation (will fail at upload since server is fake)
+    Ginger g = Ginger.builder()
+        .jwt(jwt)
+        .runtimeSurveyFile(surveyFile)
+        .encryptOnly(true);
+    assertDoesNotThrow(g::run);
   }
 
   public static String makeDummyJwt() {

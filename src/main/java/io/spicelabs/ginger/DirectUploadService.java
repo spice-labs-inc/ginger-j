@@ -95,7 +95,7 @@ public class DirectUploadService {
 
     public record CompleteResponse(String status, String bundleId, String message) {}
 
-    private record InitRequest(String sha256, long sizeBytes, String filename, String encryptedChallenge, Long targetChunkSizeBytes) {}
+    private record InitRequest(String sha256, long sizeBytes, String filename, String encryptedChallenge, Long targetChunkSizeBytes, String mimeType) {}
 
     private record CompleteRequest(String jobId, String uploadId, String blobKey, String sha256, List<CompletedPart> parts) {}
 
@@ -109,7 +109,7 @@ public class DirectUploadService {
             String filename,
             String challenge
     ) throws IOException {
-        uploadDirect(baseUrl, jwt, publicKeyPem, bundle, filename, challenge, null);
+        uploadDirect(baseUrl, jwt, publicKeyPem, bundle, filename, challenge, null, null);
     }
 
     public void uploadDirect(
@@ -120,6 +120,19 @@ public class DirectUploadService {
             String filename,
             String challenge,
             Long targetChunkSizeBytes
+    ) throws IOException {
+        uploadDirect(baseUrl, jwt, publicKeyPem, bundle, filename, challenge, targetChunkSizeBytes, null);
+    }
+
+    public void uploadDirect(
+            String baseUrl,
+            String jwt,
+            String publicKeyPem,
+            File bundle,
+            String filename,
+            String challenge,
+            Long targetChunkSizeBytes,
+            String mimeType
     ) throws IOException {
         String sha256;
         try {
@@ -140,7 +153,7 @@ public class DirectUploadService {
                 hostname, hasChallenge ? "enabled" : "disabled");
         log.info("Starting direct upload: {} bytes, SHA256: {}", sizeBytes, sha256);
 
-        InitResponse initResponse = initUpload(baseUrl, jwt, publicKeyPem, sha256, sizeBytes, filename, challenge, targetChunkSizeBytes);
+        InitResponse initResponse = initUpload(baseUrl, jwt, publicKeyPem, sha256, sizeBytes, filename, challenge, targetChunkSizeBytes, mimeType);
         String jobId = initResponse.jobId();
         log.info("Initialized multipart upload: {} parts, bundleId={}, jobId={}",
                 initResponse.parts().size(), initResponse.bundleId(), jobId);
@@ -161,7 +174,8 @@ public class DirectUploadService {
             long sizeBytes,
             String filename,
             String challenge,
-            Long targetChunkSizeBytes
+            Long targetChunkSizeBytes,
+            String mimeType
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/init";
 
@@ -182,7 +196,8 @@ public class DirectUploadService {
                 sha256, sizeBytes,
                 (filename != null && !filename.isEmpty()) ? filename : null,
                 encryptedChallenge,
-                targetChunkSizeBytes
+                targetChunkSizeBytes,
+                mimeType
         );
 
         String jsonBody = MAPPER.writeValueAsString(initRequest);
