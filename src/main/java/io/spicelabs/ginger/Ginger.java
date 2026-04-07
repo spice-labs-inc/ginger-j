@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
@@ -60,8 +61,9 @@ public class Ginger implements Callable<Integer> {
   private static final String CLAIM_CHALLENGE  = "x-challenge";
 
   //── Full mime types ─────────────────────────────────────────────────────────────
-  private static final String MIME_DEPLOY  = "application/vnd.info.deployevent";
-  private static final String MIME_BIGTENT = "application/vnd.cc.bigtent";
+  private static final String MIME_DEPLOY          = "application/vnd.info.deployevent";
+  private static final String MIME_BIGTENT         = "application/vnd.cc.bigtent";
+  private static final String MIME_RUNTIME_SURVEY  = "application/x-vnd.spicelabs.runtime-survey";
 
   //── Error messages ──────────────────────────────────────────────────────────────
   private static final String ERR_INVALID_JWT = "Invalid JWT or file path: ";
@@ -84,6 +86,10 @@ public class Ginger implements Callable<Integer> {
 
   @Option(names = "--deployment-events", description = "JSON file containing deployment events")
   private Path deploymentEventsFile;
+
+  @Option(names = "--runtime-survey", description = "JSON file containing runtime survey data")
+  private Path runtimeSurveyFile;
+  private String runtimeSubject;
 
   @Option(names = {"-e", "--encrypt-only"}, description = "Only encrypt; do not upload")
   private boolean encryptOnly;
@@ -120,6 +126,8 @@ public class Ginger implements Callable<Integer> {
   public Ginger uuid(String uuid) { this.uuid = uuid; return this; }
   public Ginger adgDir(Path adgDir) { this.adgDir = adgDir; return this; }
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
+  public Ginger runtimeSurveyFile(Path f) { this.runtimeSurveyFile = f; return this; }
+  public Ginger runtimeSubject(String s) { this.runtimeSubject = s; return this; }
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
@@ -134,14 +142,17 @@ public class Ginger implements Callable<Integer> {
   public void run() throws Exception {
     Security.addProvider(new BouncyCastleProvider());
     processExtraArgs();
-    boolean hasAdg    = adgDir != null;
-    boolean hasEvents = deploymentEventsFile != null;
-    if (hasAdg == hasEvents) {
-      throw new IllegalArgumentException("Must specify exactly one of --adg or --deployment-events");
+    boolean hasAdg            = adgDir != null;
+    boolean hasEvents         = deploymentEventsFile != null;
+    boolean hasRuntimeSurvey  = runtimeSurveyFile != null;
+    int payloadCount = (hasAdg ? 1 : 0) + (hasEvents ? 1 : 0) + (hasRuntimeSurvey ? 1 : 0);
+    if (payloadCount != 1) {
+      throw new IllegalArgumentException(
+          "Must specify exactly one of --adg, --deployment-events, or --runtime-survey");
     }
 
-    Path payload  = hasAdg ? adgDir : deploymentEventsFile;
-    String mime   = hasAdg ? MIME_BIGTENT : MIME_DEPLOY;
+    Path payload  = hasAdg ? adgDir : hasEvents ? deploymentEventsFile : runtimeSurveyFile;
+    String mime   = hasAdg ? MIME_BIGTENT : hasEvents ? MIME_DEPLOY : MIME_RUNTIME_SURVEY;
 
 
     // JWT
@@ -196,6 +207,12 @@ public class Ginger implements Callable<Integer> {
       log.info("Using target chunk size: {}MB ({} bytes)", targetChunkSizeMB, targetChunkSizeBytes);
     }
     
+    java.util.Map<String, Object> initMetadata = null;
+    if (runtimeSubject != null) {
+      initMetadata = new java.util.HashMap<>();
+      initMetadata.put("tag", runtimeSubject);
+    }
+
     new DirectUploadService().uploadDirect(
         server,
         token,
@@ -203,7 +220,9 @@ public class Ginger implements Callable<Integer> {
         bundle,
         bundle.getName(),
         challenge,
-        targetChunkSizeBytes
+        targetChunkSizeBytes,
+        mime,
+        initMetadata
     );
   }
 
@@ -378,6 +397,13 @@ public class Ginger implements Callable<Integer> {
            this.deploymentEventsFile = Paths.get(value);
          }
 
+         case "--runtime-survey" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--runtime-survey requires a value (file path)");
+           }
+           this.runtimeSurveyFile = Paths.get(value);
+         }
+
          case "--output" -> {
            if (value == null || value.isEmpty()) {
              throw new IllegalArgumentException("--output requires a value (directory path)");
@@ -420,10 +446,90 @@ public class Ginger implements Callable<Integer> {
      }
    }
 
+  /**
+   * Download the runtime survey probe config from the server.
+   * Uses the JWT to authenticate via daikon proxy → fennel.
+   *
+   * @param outputPath path to write the probe config JSON file
+   * @return true if download succeeded
+   */
+  public boolean downloadRuntimeConfig(Path outputPath) throws Exception {
+    Security.addProvider(new BouncyCastleProvider());
+    String token = resolveJwt();
+    String server = resolveServerUrl();
+    Optional<String> projId = resolveUuid();
+
+    // Build URL: server/api/project/v1/survey/runtime/config
+    String url = server;
+    if (!url.endsWith("/")) url += "/";
+    url += "api/project/v1/survey/runtime/config";
+
+    log.info("Downloading runtime probe config from {}", url);
+
+    okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build();
+
+    okhttp3.Request request = new okhttp3.Request.Builder()
+        .url(url)
+        .addHeader("Authorization", "Bearer " + token)
+        .get()
+        .build();
+
+    try (okhttp3.Response response = client.newCall(request).execute()) {
+      if (!response.isSuccessful()) {
+        log.error("Failed to download runtime config: HTTP {}", response.code());
+        return false;
+      }
+      if (response.body() == null) {
+        log.error("Empty response body from runtime config endpoint");
+        return false;
+      }
+      Files.createDirectories(outputPath.getParent());
+      Files.writeString(outputPath, response.body().string(), StandardCharsets.UTF_8);
+      log.info("Downloaded probe config to {}", outputPath);
+      return true;
+    }
+  }
+
+  public byte[] downloadRuntimeConfigBytes() throws Exception {
+    Security.addProvider(new BouncyCastleProvider());
+    String token = resolveJwt();
+    String uploadUrl = resolveServerUrl();
+    // Append runtime-config to the upload URL path (same auth as upload endpoints)
+    String url = uploadUrl;
+    if (!url.endsWith("/")) url += "/";
+    url += "runtime-config";
+
+    okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build();
+
+    okhttp3.Request request = new okhttp3.Request.Builder()
+        .url(url)
+        .addHeader("Authorization", "Bearer " + token)
+        .get()
+        .build();
+
+    try (okhttp3.Response response = client.newCall(request).execute()) {
+      if (!response.isSuccessful()) {
+        log.error("Probe config download failed: HTTP {} from {}", response.code(), url);
+        return null;
+      }
+      if (response.body() == null) {
+        log.error("Probe config download: empty response body");
+        return null;
+      }
+      return response.body().bytes();
+    }
+  }
+
   private boolean expectsValue(String key) {
     return switch (key) {
       case "--jwt", "-j", "--uuid", "--adg", "--deployment-events",
-           "--output", "--comment", "--comment-no-sensitive-info",
+           "--runtime-survey", "--output", "--comment", "--comment-no-sensitive-info",
            "--bundle-format-version", "--target-chunk-size" -> true;
       default -> false;
     };
