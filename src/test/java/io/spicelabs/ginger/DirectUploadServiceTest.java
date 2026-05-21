@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.util.Base64;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
@@ -359,7 +360,7 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}"));
 
-        java.util.UUID idemp = java.util.UUID.randomUUID();
+        UUID idemp = UUID.randomUUID();
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, null, idemp, null);
         service.uploadDirect(
@@ -398,7 +399,7 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .setBody("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}"));
 
-        java.util.UUID parentId = java.util.UUID.randomUUID();
+        UUID parentId = UUID.randomUUID();
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, parentId, null, null);
         service.uploadDirect(
@@ -417,9 +418,9 @@ class DirectUploadServiceTest {
 
     @Test
     void initSurvey_postsToSurveysAndReturnsIds() throws Exception {
-        java.util.UUID parentId = java.util.UUID.randomUUID();
-        java.util.UUID analyzeId = java.util.UUID.randomUUID();
-        java.util.UUID uploadId = java.util.UUID.randomUUID();
+        UUID parentId = UUID.randomUUID();
+        UUID analyzeId = UUID.randomUUID();
+        UUID uploadId = UUID.randomUUID();
         mockServer.enqueue(new MockResponse()
                 .setResponseCode(201)
                 .setBody(String.format(
@@ -427,7 +428,7 @@ class DirectUploadServiceTest {
                                 + "\"analyze_sub_job_id\":\"%s\",\"upload_sub_job_id\":\"%s\"}",
                         parentId, analyzeId, uploadId)));
 
-        java.util.UUID idemp = java.util.UUID.randomUUID();
+        UUID idemp = UUID.randomUUID();
         DirectUploadService.InitSurveyResponse response = service.initSurvey(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "test-jwt",
@@ -451,9 +452,9 @@ class DirectUploadServiceTest {
     void publishStatus_postsToStatusEndpoint() throws Exception {
         mockServer.enqueue(new MockResponse().setResponseCode(204));
 
-        java.util.UUID parentId = java.util.UUID.randomUUID();
-        java.util.UUID subJobId = java.util.UUID.randomUUID();
-        java.util.UUID idemp = java.util.UUID.randomUUID();
+        UUID parentId = UUID.randomUUID();
+        UUID subJobId = UUID.randomUUID();
+        UUID idemp = UUID.randomUUID();
         service.publishStatus(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "jwt",
@@ -483,12 +484,12 @@ class DirectUploadServiceTest {
         service.publishStatus(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
                 "jwt",
-                java.util.UUID.randomUUID(),
-                java.util.UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
                 "RUNNING",
                 10,
                 null,
-                java.util.UUID.randomUUID(),
+                UUID.randomUUID(),
                 null);
     }
 
@@ -498,8 +499,8 @@ class DirectUploadServiceTest {
         service.publishStatus(
                 "http://127.0.0.1:1/api/v1/bundle/upload",
                 "jwt",
-                java.util.UUID.randomUUID(),
-                java.util.UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
                 "RUNNING",
                 null,
                 null,

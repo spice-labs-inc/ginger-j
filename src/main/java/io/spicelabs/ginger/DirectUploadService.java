@@ -22,7 +22,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +39,7 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import okhttp3.MediaType;
@@ -102,9 +106,9 @@ public class DirectUploadService {
     public record UploadOptions(
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata,
-            java.util.UUID parentId,
-            java.util.UUID idempotencyKey,
+            Map<String, Object> metadata,
+            UUID parentId,
+            UUID idempotencyKey,
             String userAgent) {
 
         public static UploadOptions none() {
@@ -113,14 +117,14 @@ public class DirectUploadService {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record InitSurveyRequest(String jobType, String tag, java.util.Map<String, Object> jsonTags) {}
+    public record InitSurveyRequest(String jobType, String tag, Map<String, Object> jsonTags) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record InitSurveyResponse(
-            @com.fasterxml.jackson.annotation.JsonProperty("parent_id") java.util.UUID parentId,
-            @com.fasterxml.jackson.annotation.JsonProperty("submission_timestamp") String submissionTimestamp,
-            @com.fasterxml.jackson.annotation.JsonProperty("analyze_sub_job_id") java.util.UUID analyzeSubJobId,
-            @com.fasterxml.jackson.annotation.JsonProperty("upload_sub_job_id") java.util.UUID uploadSubJobId) {}
+            @JsonProperty("parent_id") UUID parentId,
+            @JsonProperty("submission_timestamp") String submissionTimestamp,
+            @JsonProperty("analyze_sub_job_id") UUID analyzeSubJobId,
+            @JsonProperty("upload_sub_job_id") UUID uploadSubJobId) {}
 
     private record InitRequest(
             String sha256,
@@ -129,8 +133,8 @@ public class DirectUploadService {
             String encryptedChallenge,
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata,
-            java.util.UUID parentId) {}
+            Map<String, Object> metadata,
+            UUID parentId) {}
 
     private record CompleteRequest(String jobId, String uploadId, String blobKey, String sha256, List<CompletedPart> parts) {}
 
@@ -168,7 +172,7 @@ public class DirectUploadService {
             String challenge,
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata
+            Map<String, Object> metadata
     ) throws IOException {
         uploadDirect(baseUrl, jwt, publicKeyPem, bundle, filename, challenge,
                 new UploadOptions(targetChunkSizeBytes, mimeType, metadata, null, null, null));
@@ -190,7 +194,7 @@ public class DirectUploadService {
             String baseUrl,
             String jwt,
             InitSurveyRequest request,
-            java.util.UUID idempotencyKey,
+            UUID idempotencyKey,
             String userAgent)
             throws IOException {
         if (idempotencyKey == null) {
@@ -244,18 +248,18 @@ public class DirectUploadService {
     public void publishStatus(
             String baseUrl,
             String jwt,
-            java.util.UUID parentId,
-            java.util.UUID subJobId,
+            UUID parentId,
+            UUID subJobId,
             String status,
             Integer progress,
             String message,
-            java.util.UUID idempotencyKey,
+            UUID idempotencyKey,
             String userAgent) {
         if (parentId == null || subJobId == null || status == null) {
             return;
         }
         String url = surveysUrl(baseUrl) + "/" + parentId + "/status";
-        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        Map<String, Object> body = new HashMap<>();
         body.put("subJobId", subJobId.toString());
         body.put("status", status);
         if (progress != null) {
@@ -309,7 +313,7 @@ public class DirectUploadService {
         }
         Long targetChunkSizeBytes = options.targetChunkSizeBytes();
         String mimeType = options.mimeType();
-        java.util.Map<String, Object> metadata = options.metadata();
+        Map<String, Object> metadata = options.metadata();
         String sha256;
         try {
             sha256 = HashUtil.sha256Hex(bundle);
@@ -355,9 +359,9 @@ public class DirectUploadService {
             String challenge,
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata,
-            java.util.UUID parentId,
-            java.util.UUID idempotencyKey,
+            Map<String, Object> metadata,
+            UUID parentId,
+            UUID idempotencyKey,
             String userAgent
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/init";
@@ -630,7 +634,7 @@ public class DirectUploadService {
             String blobKey,
             String sha256,
             List<CompletedPart> parts,
-            java.util.UUID idempotencyKey,
+            UUID idempotencyKey,
             String userAgent
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/complete";
@@ -668,7 +672,7 @@ public class DirectUploadService {
             try {
                 String url = normalizeUrl(baseUrl) + "/progress";
                 String jsonBody = MAPPER.writeValueAsString(
-                        java.util.Map.of("jobId", jobId, "progress", progress));
+                        Map.of("jobId", jobId, "progress", progress));
                 Request request = new Request.Builder()
                         .url(url)
                         .addHeader("Authorization", "Bearer " + jwt)

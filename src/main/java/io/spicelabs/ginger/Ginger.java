@@ -23,6 +23,7 @@ import java.nio.file.Paths;
 import java.security.Security;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -124,6 +125,7 @@ public class Ginger implements Callable<Integer> {
   private UUID idempotencyKey;
   private UUID parentId;
   private String userAgent;
+  private Instant submissionTimestamp;
 
 
   //── Java-first fluent API ──────────────────────────────────────────────────────
@@ -161,6 +163,14 @@ public class Ginger implements Callable<Integer> {
    * something like {@code spice-labs-cli/1.2.3}.
    */
   public Ginger userAgent(String ua) { this.userAgent = ua; return this; }
+
+  /**
+   * Server-minted submission timestamp returned by {@code POST /surveys}. Stamped into the
+   * bundle as its date so the artifact never carries a client clock value. The CLI reads it
+   * from the {@code initSurvey} response and passes it back in here. When unset, the bundle
+   * date falls back to local time (encrypt-only / legacy uploads).
+   */
+  public Ginger submissionTimestamp(Instant ts) { this.submissionTimestamp = ts; return this; }
 
   /**
    * Perform the work—encrypt (and optionally upload).
@@ -208,7 +218,8 @@ public class Ginger implements Callable<Integer> {
 
     File bundle = ZipBuilder.build(
         projId, pubKey, stream, Files.isDirectory(payload),
-        mime, comment, outDir, version
+        mime, comment, outDir, version,
+        Optional.ofNullable(submissionTimestamp)
     );
 
     log.info("SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
@@ -233,9 +244,9 @@ public class Ginger implements Callable<Integer> {
       log.info("Using target chunk size: {}MB ({} bytes)", targetChunkSizeMB, targetChunkSizeBytes);
     }
     
-    java.util.Map<String, Object> initMetadata = null;
+    Map<String, Object> initMetadata = null;
     if (runtimeSubject != null) {
-      initMetadata = new java.util.HashMap<>();
+      initMetadata = new HashMap<>();
       initMetadata.put("tag", runtimeSubject);
     }
 
