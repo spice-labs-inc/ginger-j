@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -286,7 +287,10 @@ public class DirectUploadService {
         if (userAgent != null && !userAgent.isEmpty()) {
             b.addHeader("User-Agent", userAgent);
         }
-        try (Response response = client.newCall(b.build()).execute()) {
+        // Best-effort, but we wait for it: the CLI is short-lived, so a fire-and-forget call
+        // could be dropped on exit. Cap the call at 5s so a slow endpoint can't stall the upload.
+        OkHttpClient statusClient = client.newBuilder().callTimeout(Duration.ofSeconds(5)).build();
+        try (Response response = statusClient.newCall(b.build()).execute()) {
             if (response.code() == 404) {
                 log.debug("publishStatus: endpoint not deployed on this daikon (404) — silent");
                 return;

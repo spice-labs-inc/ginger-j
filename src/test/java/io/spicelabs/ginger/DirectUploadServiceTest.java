@@ -64,6 +64,16 @@ class DirectUploadServiceTest {
                 uploadId, blobKey, bundleId, presignedUrl);
     }
 
+    /**
+     * Enqueue the complete-upload response so the test tolerates the racy, fire-and-forget
+     * progress request. Progress and complete arrive in any order, so we serve the complete
+     * body for both slots — {@code /complete} always gets a valid body regardless of ordering.
+     */
+    private void enqueueCompleteResponse(String body) {
+        mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(body));
+        mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(body));
+    }
+
     @Test
     void uploadDirect_success() throws Exception {
         String bundleId = "bundle-123";
@@ -79,14 +89,10 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"abc123\""));
 
-        // Progress report (best-effort, may or may not be sent for small files)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
-                        bundleId)));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse(String.format(
+                "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
+                bundleId));
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -210,12 +216,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -246,12 +248,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -292,12 +290,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         String baseUrl = mockServer.url("/api/global/v1/bundle/upload").toString();
         if (!baseUrl.endsWith("/")) {
@@ -355,10 +349,7 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
         storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}"));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
 
         UUID idemp = UUID.randomUUID();
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
@@ -394,10 +385,7 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
         storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}"));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
 
         UUID parentId = UUID.randomUUID();
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
@@ -526,10 +514,7 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
         storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}"));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
 
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, null, null, "spice-labs-cli/1.2.3");
