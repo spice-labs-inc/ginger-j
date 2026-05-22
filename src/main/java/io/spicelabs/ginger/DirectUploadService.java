@@ -20,6 +20,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -42,6 +43,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -54,6 +56,7 @@ import okio.Okio;
 public class DirectUploadService {
     private static final Logger log = LoggerFactory.getLogger(DirectUploadService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
     private static final int MAX_RETRIES = 3;
@@ -123,7 +126,7 @@ public class DirectUploadService {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record InitSurveyResponse(
             @JsonProperty("parent_id") UUID parentId,
-            @JsonProperty("submission_timestamp") String submissionTimestamp,
+            @JsonProperty("submission_timestamp") Instant submissionTimestamp,
             @JsonProperty("analyze_sub_job_id") UUID analyzeSubJobId,
             @JsonProperty("upload_sub_job_id") UUID uploadSubJobId) {}
 

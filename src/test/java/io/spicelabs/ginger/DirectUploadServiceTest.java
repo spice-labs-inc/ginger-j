@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -427,6 +428,7 @@ class DirectUploadServiceTest {
         assertEquals(parentId, response.parentId());
         assertEquals(analyzeId, response.analyzeSubJobId());
         assertEquals(uploadId, response.uploadSubJobId());
+        assertEquals(Instant.parse("2026-05-20T12:00:00Z"), response.submissionTimestamp());
 
         RecordedRequest req = mockServer.takeRequest();
         assertEquals("/api/global/v1/surveys", req.getPath());
