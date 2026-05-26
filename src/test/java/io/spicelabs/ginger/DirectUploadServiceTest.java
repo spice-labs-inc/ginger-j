@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.time.Instant;
 import java.util.Base64;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
@@ -63,6 +65,16 @@ class DirectUploadServiceTest {
                 uploadId, blobKey, bundleId, presignedUrl);
     }
 
+    /**
+     * Enqueue the complete-upload response so the test tolerates the racy, fire-and-forget
+     * progress request. Progress and complete arrive in any order, so we serve the complete
+     * body for both slots — {@code /complete} always gets a valid body regardless of ordering.
+     */
+    private void enqueueCompleteResponse(String body) {
+        mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(body));
+        mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(body));
+    }
+
     @Test
     void uploadDirect_success() throws Exception {
         String bundleId = "bundle-123";
@@ -78,14 +90,10 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"abc123\""));
 
-        // Progress report (best-effort, may or may not be sent for small files)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody(String.format(
-                        "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
-                        bundleId)));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse(String.format(
+                "{\"status\":\"completed\",\"bundleId\":\"%s\",\"message\":\"Upload successful\"}",
+                bundleId));
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -209,12 +217,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -245,12 +249,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
                 mockServer.url("/api/global/v1/bundle/upload").toString(),
@@ -291,12 +291,8 @@ class DirectUploadServiceTest {
                 .setResponseCode(200)
                 .addHeader("ETag", "\"etag1\""));
 
-        // Progress report (best-effort)
-        mockServer.enqueue(new MockResponse().setResponseCode(200));
-
-        mockServer.enqueue(new MockResponse()
-                .setResponseCode(200)
-                .setBody("{\"status\":\"completed\",\"bundleId\":\"bid\"}"));
+        // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         String baseUrl = mockServer.url("/api/global/v1/bundle/upload").toString();
         if (!baseUrl.endsWith("/")) {
@@ -346,4 +342,205 @@ class DirectUploadServiceTest {
         }
         assertTrue(foundEtagMessage, "Expected ETag error in exception chain, got: " + ex.getMessage());
     }
+
+    @Test
+    void uploadDirect_idempotencyKey_sentOnInitAndComplete() throws Exception {
+        String presignedUrl = storageServer.url("/upload").toString();
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
+        storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
+
+        UUID idemp = UUID.randomUUID();
+        DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
+                null, null, null, null, idemp, null);
+        service.uploadDirect(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null,
+                opts);
+
+        // The init request and the complete request should both carry the Idempotency-Key header.
+        boolean initHadHeader = false;
+        boolean completeHadHeader = false;
+        RecordedRequest req;
+        while ((req = mockServer.takeRequest(1, TimeUnit.SECONDS)) != null) {
+            if (req.getPath().endsWith("/init")) {
+                initHadHeader = idemp.toString().equals(req.getHeader("Idempotency-Key"));
+            } else if (req.getPath().endsWith("/complete")) {
+                completeHadHeader = idemp.toString().equals(req.getHeader("Idempotency-Key"));
+            }
+        }
+        assertTrue(initHadHeader, "init request should carry Idempotency-Key");
+        assertTrue(completeHadHeader, "complete request should carry Idempotency-Key");
+    }
+
+    @Test
+    void uploadDirect_parentId_sentInInitBody() throws Exception {
+        String presignedUrl = storageServer.url("/upload").toString();
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
+        storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
+
+        UUID parentId = UUID.randomUUID();
+        DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
+                null, null, null, parentId, null, null);
+        service.uploadDirect(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null,
+                opts);
+
+        RecordedRequest initRequest = mockServer.takeRequest();
+        assertTrue(initRequest.getBody().readUtf8().contains("\"parentId\":\"" + parentId.toString() + "\""),
+                "init request body should contain parentId");
+    }
+
+    @Test
+    void initSurvey_postsToSurveysAndReturnsIds() throws Exception {
+        UUID parentId = UUID.randomUUID();
+        UUID analyzeId = UUID.randomUUID();
+        UUID uploadId = UUID.randomUUID();
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(201)
+                .setBody(String.format(
+                        "{\"parent_id\":\"%s\",\"submission_timestamp\":\"2026-05-20T12:00:00Z\","
+                                + "\"analyze_sub_job_id\":\"%s\",\"upload_sub_job_id\":\"%s\"}",
+                        parentId, analyzeId, uploadId)));
+
+        UUID idemp = UUID.randomUUID();
+        DirectUploadService.InitSurveyResponse response = service.initSurvey(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "test-jwt",
+                new DirectUploadService.InitSurveyRequest("INVENTORY_SURVEY", "v1", null),
+                idemp,
+                "spice-labs-cli/test");
+
+        assertEquals(parentId, response.parentId());
+        assertEquals(analyzeId, response.analyzeSubJobId());
+        assertEquals(uploadId, response.uploadSubJobId());
+        assertEquals(Instant.parse("2026-05-20T12:00:00Z"), response.submissionTimestamp());
+
+        RecordedRequest req = mockServer.takeRequest();
+        assertEquals("/api/global/v1/surveys", req.getPath());
+        assertEquals("Bearer test-jwt", req.getHeader("Authorization"));
+        assertEquals(idemp.toString(), req.getHeader("Idempotency-Key"));
+        assertEquals("spice-labs-cli/test", req.getHeader("User-Agent"));
+        assertTrue(req.getBody().readUtf8().contains("\"jobType\":\"INVENTORY_SURVEY\""));
+    }
+
+    @Test
+    void publishStatus_postsToStatusEndpoint() throws Exception {
+        mockServer.enqueue(new MockResponse().setResponseCode(204));
+
+        UUID parentId = UUID.randomUUID();
+        UUID subJobId = UUID.randomUUID();
+        UUID idemp = UUID.randomUUID();
+        service.publishStatus(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "jwt",
+                parentId,
+                subJobId,
+                "RUNNING",
+                42,
+                "uploading",
+                idemp,
+                "spice-labs-cli/test");
+
+        RecordedRequest req = mockServer.takeRequest();
+        assertEquals("/api/global/v1/surveys/" + parentId + "/status", req.getPath());
+        assertEquals(idemp.toString(), req.getHeader("Idempotency-Key"));
+        assertEquals("spice-labs-cli/test", req.getHeader("User-Agent"));
+        String body = req.getBody().readUtf8();
+        assertTrue(body.contains("\"subJobId\":\"" + subJobId + "\""));
+        assertTrue(body.contains("\"status\":\"RUNNING\""));
+        assertTrue(body.contains("\"progress\":42"));
+    }
+
+    @Test
+    void publishStatus_404IsSilent() {
+        mockServer.enqueue(new MockResponse().setResponseCode(404));
+
+        // Should not throw — best-effort progress reporting.
+        service.publishStatus(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "jwt",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "RUNNING",
+                10,
+                null,
+                UUID.randomUUID(),
+                null);
+    }
+
+    @Test
+    void publishStatus_transportErrorIsSilent() {
+        // Server is down — point at an unroutable URL on this host that won't connect.
+        service.publishStatus(
+                "http://127.0.0.1:1/api/v1/bundle/upload",
+                "jwt",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "RUNNING",
+                null,
+                null,
+                null,
+                null);
+        // Reaching this line == no exception thrown.
+    }
+
+    @Test
+    void initSurvey_requiresIdempotencyKey() {
+        assertThrows(IllegalArgumentException.class, () -> service.initSurvey(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "jwt",
+                new DirectUploadService.InitSurveyRequest("INVENTORY_SURVEY", null, null),
+                null,
+                null));
+    }
+
+    @Test
+    void uploadDirect_userAgent_sentOnRequests() throws Exception {
+        String presignedUrl = storageServer.url("/upload").toString();
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody(buildInitResponse("b", "u", "external/p/b.blob", presignedUrl)));
+        storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"e\""));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"b\",\"message\":\"ok\"}");
+
+        DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
+                null, null, null, null, null, "spice-labs-cli/1.2.3");
+        service.uploadDirect(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null,
+                opts);
+
+        boolean initUA = false;
+        boolean completeUA = false;
+        RecordedRequest req;
+        while ((req = mockServer.takeRequest(1, TimeUnit.SECONDS)) != null) {
+            if (req.getPath().endsWith("/init")) {
+                initUA = "spice-labs-cli/1.2.3".equals(req.getHeader("User-Agent"));
+            } else if (req.getPath().endsWith("/complete")) {
+                completeUA = "spice-labs-cli/1.2.3".equals(req.getHeader("User-Agent"));
+            }
+        }
+        assertTrue(initUA, "init request should carry User-Agent");
+        assertTrue(completeUA, "complete request should carry User-Agent");
+    }
+
 }

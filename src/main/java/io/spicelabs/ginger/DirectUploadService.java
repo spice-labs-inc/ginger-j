@@ -19,10 +19,15 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,7 +41,9 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -49,6 +56,7 @@ import okio.Okio;
 public class DirectUploadService {
     private static final Logger log = LoggerFactory.getLogger(DirectUploadService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
     private static final int MAX_RETRIES = 3;
@@ -95,7 +103,42 @@ public class DirectUploadService {
 
     public record CompleteResponse(String status, String bundleId, String message) {}
 
-    private record InitRequest(String sha256, long sizeBytes, String filename, String encryptedChallenge, Long targetChunkSizeBytes, String mimeType, java.util.Map<String, Object> metadata) {}
+    /**
+     * Optional inputs for an upload. All fields nullable; defaults match the legacy
+     * two-phase flow (no parent, no idempotency key).
+     */
+    public record UploadOptions(
+            Long targetChunkSizeBytes,
+            String mimeType,
+            Map<String, Object> metadata,
+            UUID parentId,
+            UUID idempotencyKey,
+            String userAgent) {
+
+        public static UploadOptions none() {
+            return new UploadOptions(null, null, null, null, null, null);
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record InitSurveyRequest(String jobType, String tag, Map<String, Object> jsonTags) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record InitSurveyResponse(
+            @JsonProperty("parent_id") UUID parentId,
+            @JsonProperty("submission_timestamp") Instant submissionTimestamp,
+            @JsonProperty("analyze_sub_job_id") UUID analyzeSubJobId,
+            @JsonProperty("upload_sub_job_id") UUID uploadSubJobId) {}
+
+    private record InitRequest(
+            String sha256,
+            long sizeBytes,
+            String filename,
+            String encryptedChallenge,
+            Long targetChunkSizeBytes,
+            String mimeType,
+            Map<String, Object> metadata,
+            UUID parentId) {}
 
     private record CompleteRequest(String jobId, String uploadId, String blobKey, String sha256, List<CompletedPart> parts) {}
 
@@ -133,8 +176,151 @@ public class DirectUploadService {
             String challenge,
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata
+            Map<String, Object> metadata
     ) throws IOException {
+        uploadDirect(baseUrl, jwt, publicKeyPem, bundle, filename, challenge,
+                new UploadOptions(targetChunkSizeBytes, mimeType, metadata, null, null, null));
+    }
+
+    /**
+     * Mint a survey parent on daikon via {@code POST /surveys}. Returns the parent id and
+     * any sub-job ids daikon allocated.
+     *
+     * @param baseUrl                upload base URL (the same JWT-derived URL the upload
+     *                               methods use; the surveys endpoint is computed from it).
+     * @param jwt                    bearer token.
+     * @param request                request body — {@code jobType} required, others optional.
+     * @param idempotencyKey         required by daikon; reused on retry to return the
+     *                               original parent id.
+     * @param userAgent              optional value for the {@code User-Agent} header.
+     */
+    public InitSurveyResponse initSurvey(
+            String baseUrl,
+            String jwt,
+            InitSurveyRequest request,
+            UUID idempotencyKey,
+            String userAgent)
+            throws IOException {
+        if (idempotencyKey == null) {
+            throw new IllegalArgumentException("idempotencyKey is required for POST /surveys");
+        }
+        String url = surveysUrl(baseUrl);
+        String jsonBody = MAPPER.writeValueAsString(request);
+        Supplier<Request> requestSupplier = () -> {
+            Request.Builder b = new Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer " + jwt)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Idempotency-Key", idempotencyKey.toString())
+                    .post(RequestBody.create(jsonBody, JSON));
+            if (userAgent != null && !userAgent.isEmpty()) {
+                b.addHeader("User-Agent", userAgent);
+            }
+            return b.build();
+        };
+        try (Response response = executeWithRetry(requestSupplier, "Init survey")) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                throw new IOException("Failed to init survey: " + response.code() + " " + responseBody);
+            }
+            return MAPPER.readValue(responseBody, InitSurveyResponse.class);
+        }
+    }
+
+    /**
+     * Derive the project-scoped surveys URL from the upload base URL. The upload base URL
+     * points at {@code .../bundle/upload}; the surveys endpoint is a sibling at
+     * {@code .../surveys}.
+     */
+    private static String surveysUrl(String baseUrl) {
+        String normalized = normalizeUrl(baseUrl);
+        String marker = "/bundle/upload";
+        int idx = normalized.lastIndexOf(marker);
+        String projectBase = idx >= 0 ? normalized.substring(0, idx) : normalized;
+        return projectBase + "/surveys";
+    }
+
+    /**
+     * Publish a sub-job status update to {@code POST /surveys/{parentId}/status}. Best-effort:
+     * 404 (endpoint not deployed yet on this daikon) and any network/transport error are
+     * swallowed silently — phase-level progress is informational, not load-bearing. Other
+     * non-2xx responses are logged at WARN level but do not throw.
+     *
+     * <p>Reuse the same {@code idempotencyKey} across all status posts for one logical
+     * survey so retries don't re-apply the same transition.
+     */
+    public void publishStatus(
+            String baseUrl,
+            String jwt,
+            UUID parentId,
+            UUID subJobId,
+            String status,
+            Integer progress,
+            String message,
+            UUID idempotencyKey,
+            String userAgent) {
+        if (parentId == null || subJobId == null || status == null) {
+            return;
+        }
+        String url = surveysUrl(baseUrl) + "/" + parentId + "/status";
+        Map<String, Object> body = new HashMap<>();
+        body.put("subJobId", subJobId.toString());
+        body.put("status", status);
+        if (progress != null) {
+            body.put("progress", progress);
+        }
+        if (message != null) {
+            body.put("message", message);
+        }
+        String jsonBody;
+        try {
+            jsonBody = MAPPER.writeValueAsString(body);
+        } catch (Exception e) {
+            log.debug("publishStatus: failed to serialize body — skipping: {}", e.getMessage());
+            return;
+        }
+        Request.Builder b = new Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer " + jwt)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(jsonBody, JSON));
+        if (idempotencyKey != null) {
+            b.addHeader("Idempotency-Key", idempotencyKey.toString());
+        }
+        if (userAgent != null && !userAgent.isEmpty()) {
+            b.addHeader("User-Agent", userAgent);
+        }
+        // Best-effort, but we wait for it: the CLI is short-lived, so a fire-and-forget call
+        // could be dropped on exit. Cap the call at 5s so a slow endpoint can't stall the upload.
+        OkHttpClient statusClient = client.newBuilder().callTimeout(Duration.ofSeconds(5)).build();
+        try (Response response = statusClient.newCall(b.build()).execute()) {
+            if (response.code() == 404) {
+                log.debug("publishStatus: endpoint not deployed on this daikon (404) — silent");
+                return;
+            }
+            if (!response.isSuccessful()) {
+                log.warn("publishStatus: server returned {} for {}", response.code(), url);
+            }
+        } catch (IOException e) {
+            log.debug("publishStatus: transport error — silent: {}", e.getMessage());
+        }
+    }
+
+    public void uploadDirect(
+            String baseUrl,
+            String jwt,
+            String publicKeyPem,
+            File bundle,
+            String filename,
+            String challenge,
+            UploadOptions options
+    ) throws IOException {
+        if (options == null) {
+            options = UploadOptions.none();
+        }
+        Long targetChunkSizeBytes = options.targetChunkSizeBytes();
+        String mimeType = options.mimeType();
+        Map<String, Object> metadata = options.metadata();
         String sha256;
         try {
             sha256 = HashUtil.sha256Hex(bundle);
@@ -154,7 +340,9 @@ public class DirectUploadService {
                 hostname, hasChallenge ? "enabled" : "disabled");
         log.info("Starting direct upload: {} bytes, SHA256: {}", sizeBytes, sha256);
 
-        InitResponse initResponse = initUpload(baseUrl, jwt, publicKeyPem, sha256, sizeBytes, filename, challenge, targetChunkSizeBytes, mimeType, metadata);
+        InitResponse initResponse = initUpload(baseUrl, jwt, publicKeyPem, sha256, sizeBytes, filename, challenge,
+                targetChunkSizeBytes, mimeType, metadata, options.parentId(),
+                options.idempotencyKey(), options.userAgent());
         String jobId = initResponse.jobId();
         log.info("Initialized multipart upload: {} parts, bundleId={}, jobId={}",
                 initResponse.parts().size(), initResponse.bundleId(), jobId);
@@ -162,7 +350,8 @@ public class DirectUploadService {
         List<CompletedPart> completedParts = uploadParts(bundle, initResponse.parts(), baseUrl, jwt, jobId);
 
         CompleteResponse completeResponse = completeUpload(
-                baseUrl, jwt, jobId, initResponse.uploadId(), initResponse.blobKey(), sha256, completedParts);
+                baseUrl, jwt, jobId, initResponse.uploadId(), initResponse.blobKey(), sha256, completedParts,
+                options.idempotencyKey(), options.userAgent());
         log.info("Upload complete: status={}, bundleId={}, sha256={}",
                 completeResponse.status(), completeResponse.bundleId(), sha256);
     }
@@ -177,7 +366,10 @@ public class DirectUploadService {
             String challenge,
             Long targetChunkSizeBytes,
             String mimeType,
-            java.util.Map<String, Object> metadata
+            Map<String, Object> metadata,
+            UUID parentId,
+            UUID idempotencyKey,
+            String userAgent
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/init";
 
@@ -200,17 +392,26 @@ public class DirectUploadService {
                 encryptedChallenge,
                 targetChunkSizeBytes,
                 mimeType,
-                metadata
+                metadata,
+                parentId
         );
 
         String jsonBody = MAPPER.writeValueAsString(initRequest);
 
-        Supplier<Request> requestSupplier = () -> new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + jwt)
-                .addHeader("Content-Type", "application/json")
-                .post(RequestBody.create(jsonBody, JSON))
-                .build();
+        Supplier<Request> requestSupplier = () -> {
+            Request.Builder b = new Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer " + jwt)
+                    .addHeader("Content-Type", "application/json")
+                    .post(RequestBody.create(jsonBody, JSON));
+            if (idempotencyKey != null) {
+                b.addHeader("Idempotency-Key", idempotencyKey.toString());
+            }
+            if (userAgent != null && !userAgent.isEmpty()) {
+                b.addHeader("User-Agent", userAgent);
+            }
+            return b.build();
+        };
 
         try (Response response = executeWithRetry(requestSupplier, "Init upload")) {
             String responseBody = response.body() != null ? response.body().string() : "";
@@ -439,19 +640,29 @@ public class DirectUploadService {
             String uploadId,
             String blobKey,
             String sha256,
-            List<CompletedPart> parts
+            List<CompletedPart> parts,
+            UUID idempotencyKey,
+            String userAgent
     ) throws IOException {
         String url = normalizeUrl(baseUrl) + "/complete";
 
         CompleteRequest completeRequest = new CompleteRequest(jobId, uploadId, blobKey, sha256, parts);
         String jsonBody = MAPPER.writeValueAsString(completeRequest);
 
-        Supplier<Request> requestSupplier = () -> new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + jwt)
-                .addHeader("Content-Type", "application/json")
-                .post(RequestBody.create(jsonBody, JSON))
-                .build();
+        Supplier<Request> requestSupplier = () -> {
+            Request.Builder b = new Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer " + jwt)
+                    .addHeader("Content-Type", "application/json")
+                    .post(RequestBody.create(jsonBody, JSON));
+            if (idempotencyKey != null) {
+                b.addHeader("Idempotency-Key", idempotencyKey.toString());
+            }
+            if (userAgent != null && !userAgent.isEmpty()) {
+                b.addHeader("User-Agent", userAgent);
+            }
+            return b.build();
+        };
 
         try (Response response = executeWithRetry(requestSupplier, "Complete upload")) {
             String responseBody = response.body() != null ? response.body().string() : "";
@@ -468,7 +679,7 @@ public class DirectUploadService {
             try {
                 String url = normalizeUrl(baseUrl) + "/progress";
                 String jsonBody = MAPPER.writeValueAsString(
-                        java.util.Map.of("jobId", jobId, "progress", progress));
+                        Map.of("jobId", jobId, "progress", progress));
                 Request request = new Request.Builder()
                         .url(url)
                         .addHeader("Authorization", "Bearer " + jwt)

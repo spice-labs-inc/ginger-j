@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.zip.ZipFile;
 
@@ -55,7 +56,8 @@ class ZipBuilderTest {
           "application/x",
           null,
           tempDir,
-          BundleFormatVersion.VERSION_1
+          BundleFormatVersion.VERSION_1,
+          Optional.empty()
       );
 
       try (ZipFile zf = new ZipFile(zip)) {
@@ -63,6 +65,30 @@ class ZipBuilderTest {
         assertNotNull(zf.getEntry("key.txt"));
         assertNotNull(zf.getEntry("payload.enc"));
       }
+    }
+  }
+
+  @Test
+  void usesServerSubmissionTimestampForBundleDate(@TempDir Path tempDir) throws Exception {
+    Instant serverTs = Instant.parse("2026-05-20T12:00:00Z");
+    byte[] data = "data".getBytes(StandardCharsets.UTF_8);
+
+    File zip = ZipBuilder.build(
+        Optional.of("u"), Optional.empty(),
+        new ByteArrayInputStream(data),
+        false,
+        "application/x",
+        null,
+        tempDir,
+        BundleFormatVersion.VERSION_1,
+        Optional.of(serverTs)
+    );
+
+    try (ZipFile zf = new ZipFile(zip)) {
+      var entry = zf.getEntry("bundle_date.txt");
+      assertNotNull(entry);
+      String date = new String(zf.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+      assertEquals(serverTs.toString(), date);
     }
   }
 }

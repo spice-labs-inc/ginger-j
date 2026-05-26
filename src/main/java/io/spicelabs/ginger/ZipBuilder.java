@@ -60,7 +60,12 @@ public class ZipBuilder {
       String mimeType,
       String comment,
       Path outputDir,
-      BundleFormatVersion version) throws Exception {
+      BundleFormatVersion version,
+      Optional<Instant> bundleDate) throws Exception {
+
+    // The bundle date is the server's submission timestamp, never the client clock.
+    // Fall back to local time only when no server value is supplied (encrypt-only / no upload).
+    Instant bundleInstant = bundleDate.orElseGet(Instant::now);
 
     Path dir = (outputDir != null)
         ? outputDir.resolve(PayloadStreamer.GINGER_OUTPUT_DIR)
@@ -70,13 +75,13 @@ public class ZipBuilder {
 
     String fileName = String.format("%s-%d%s",
         uuid.orElse("plaintext_upload"),
-        Instant.now().toEpochMilli(),
+        bundleInstant.toEpochMilli(),
         ZIP_EXTENSION);
     Path zip = dir.resolve(fileName);
 
     try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
       writeEntry(zos, ENTRY_UUID, uuid.orElse("plaintext_upload").getBytes());
-      writeEntry(zos, ENTRY_DATE, Instant.now().toString().getBytes());
+      writeEntry(zos, ENTRY_DATE, bundleInstant.toString().getBytes());
 
       String containerType = payloadIsTar
           ? (version.supports(BundleFormatVersion.Feature.COMPRESS_TAR) ? TYPE_TAR_V2 : TYPE_TAR_V1)

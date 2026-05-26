@@ -90,10 +90,10 @@ class PayloadStreamerTest {
 
     File zipV1 = ZipBuilder.build(Optional.empty(), Optional.empty(),
         PayloadStreamer.stream(d, BundleFormatVersion.VERSION_1), true,
-        "test/mime", null, tempDir, BundleFormatVersion.VERSION_1);
+        "test/mime", null, tempDir, BundleFormatVersion.VERSION_1, Optional.empty());
     File zipV2 = ZipBuilder.build(Optional.empty(), Optional.empty(),
         PayloadStreamer.stream(d, BundleFormatVersion.VERSION_2), true,
-        "test/mime", null, tempDir, BundleFormatVersion.VERSION_2);
+        "test/mime", null, tempDir, BundleFormatVersion.VERSION_2, Optional.empty());
 
     try (ZipFile zfV1 = new ZipFile(zipV1);
          ZipFile zfV2 = new ZipFile(zipV2)) {

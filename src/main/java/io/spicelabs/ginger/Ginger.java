@@ -23,9 +23,11 @@ import java.nio.file.Paths;
 import java.security.Security;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
@@ -118,6 +120,13 @@ public class Ginger implements Callable<Integer> {
 
   Map<String, String> extraArgs;
 
+  // Optional daikon API inputs. All nullable; older daikon deployments that don't
+  // recognize them treat them as absent.
+  private UUID idempotencyKey;
+  private UUID parentId;
+  private String userAgent;
+  private Instant submissionTimestamp;
+
 
   //── Java-first fluent API ──────────────────────────────────────────────────────
 
@@ -135,6 +144,33 @@ public class Ginger implements Callable<Integer> {
   public Ginger bundleFormatVersion(int v) { this.bundleFormatVersion = v; return this; }
   public Ginger targetChunkSizeMB(Integer sizeMB) { this.targetChunkSizeMB = sizeMB; return this; }
   public Ginger extraArgs(Map<String, String> args) { this.extraArgs = args; return this; }
+
+  /**
+   * Idempotency-Key value sent on state-introducing HTTP calls so a retried operation
+   * returns the original result. Generate one UUID per logical upload and reuse it
+   * across retries of the same operation.
+   */
+  public Ginger idempotencyKey(UUID key) { this.idempotencyKey = key; return this; }
+
+  /**
+   * Parent survey id from a prior {@code POST /surveys} call. When set, the upload-init
+   * request reuses that survey row instead of minting a new one.
+   */
+  public Ginger parentId(UUID parentId) { this.parentId = parentId; return this; }
+
+  /**
+   * Value sent in the {@code User-Agent} header on every outbound HTTP request. Typically
+   * something like {@code spice-labs-cli/1.2.3}.
+   */
+  public Ginger userAgent(String ua) { this.userAgent = ua; return this; }
+
+  /**
+   * Server-minted submission timestamp returned by {@code POST /surveys}. Stamped into the
+   * bundle as its date so the artifact never carries a client clock value. The CLI reads it
+   * from the {@code initSurvey} response and passes it back in here. When unset, the bundle
+   * date falls back to local time (encrypt-only / legacy uploads).
+   */
+  public Ginger submissionTimestamp(Instant ts) { this.submissionTimestamp = ts; return this; }
 
   /**
    * Perform the work—encrypt (and optionally upload).
@@ -182,7 +218,8 @@ public class Ginger implements Callable<Integer> {
 
     File bundle = ZipBuilder.build(
         projId, pubKey, stream, Files.isDirectory(payload),
-        mime, comment, outDir, version
+        mime, comment, outDir, version,
+        Optional.ofNullable(submissionTimestamp)
     );
 
     log.info("SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
@@ -207,12 +244,19 @@ public class Ginger implements Callable<Integer> {
       log.info("Using target chunk size: {}MB ({} bytes)", targetChunkSizeMB, targetChunkSizeBytes);
     }
     
-    java.util.Map<String, Object> initMetadata = null;
+    Map<String, Object> initMetadata = null;
     if (runtimeSubject != null) {
-      initMetadata = new java.util.HashMap<>();
+      initMetadata = new HashMap<>();
       initMetadata.put("tag", runtimeSubject);
     }
 
+    DirectUploadService.UploadOptions options = new DirectUploadService.UploadOptions(
+        targetChunkSizeBytes,
+        mime,
+        initMetadata,
+        parentId,
+        idempotencyKey,
+        userAgent);
     new DirectUploadService().uploadDirect(
         server,
         token,
@@ -220,9 +264,7 @@ public class Ginger implements Callable<Integer> {
         bundle,
         bundle.getName(),
         challenge,
-        targetChunkSizeBytes,
-        mime,
-        initMetadata
+        options
     );
   }
 
