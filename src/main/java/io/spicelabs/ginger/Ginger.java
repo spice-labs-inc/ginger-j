@@ -126,6 +126,7 @@ public class Ginger implements Callable<Integer> {
   private UUID parentId;
   private String userAgent;
   private Instant submissionTimestamp;
+  private Runnable afterBundleWrapped;
 
 
   //── Java-first fluent API ──────────────────────────────────────────────────────
@@ -171,6 +172,18 @@ public class Ginger implements Callable<Integer> {
    * date falls back to local time (encrypt-only / legacy uploads).
    */
   public Ginger submissionTimestamp(Instant ts) { this.submissionTimestamp = ts; return this; }
+
+  /**
+   * Callback fired once the bundle has been wrapped (encrypted + zipped + SHA-256 hashed)
+   * but before any upload begins. Lets callers mark a local "analyze" phase complete at the
+   * exact moment the work transitions from local I/O to the network upload — useful for
+   * publishing a sub-job status without having to split {@link #run()} into separate calls.
+   *
+   * <p>Fires for every {@code run()} that reaches the wrap step, including {@code encryptOnly}
+   * runs (the bundle is still wrapped). Exceptions thrown by the callback are caught and
+   * logged at warn level so a misbehaving listener can never abort the upload.
+   */
+  public Ginger afterBundleWrapped(Runnable callback) { this.afterBundleWrapped = callback; return this; }
 
   /**
    * Publish a sub-job status update against {@code POST /surveys/{parentId}/status}. Reuses
@@ -254,6 +267,14 @@ public class Ginger implements Callable<Integer> {
     );
 
     log.info("SHA256 hash of bundle is {}", HashUtil.sha256Hex(bundle));
+
+    if (afterBundleWrapped != null) {
+      try {
+        afterBundleWrapped.run();
+      } catch (Throwable t) {
+        log.warn("afterBundleWrapped callback threw — ignoring: {}", t.getMessage());
+      }
+    }
 
     if (encryptOnly) {
       log.info("Wrote encrypted file to {}", bundle);
