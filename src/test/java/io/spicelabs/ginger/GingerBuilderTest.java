@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -132,6 +134,34 @@ class GingerBuilderTest {
       long zips = files.filter(p -> p.toString().endsWith(".zip")).count();
       assertEquals(1, zips);
     }
+  }
+
+  @Test
+  void afterBundleWrapped_firesOnceAfterWrapInEncryptOnly() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Ginger.builder()
+        .jwt(jwt)
+        .adgDir(adgDir)
+        .encryptOnly(true)
+        .afterBundleWrapped(calls::incrementAndGet)
+        .run();
+    assertEquals(1, calls.get(), "callback should fire exactly once after wrap");
+  }
+
+  @Test
+  void afterBundleWrapped_swallowsCallbackException() {
+    AtomicBoolean fired = new AtomicBoolean(false);
+    assertDoesNotThrow(() ->
+        Ginger.builder()
+            .jwt(jwt)
+            .adgDir(adgDir)
+            .encryptOnly(true)
+            .afterBundleWrapped(() -> {
+              fired.set(true);
+              throw new RuntimeException("listener went sideways");
+            })
+            .run());
+    assertTrue(fired.get(), "callback must run before its exception is swallowed");
   }
 
   @Test
