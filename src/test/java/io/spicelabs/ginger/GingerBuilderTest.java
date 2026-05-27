@@ -9,6 +9,7 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -131,6 +132,33 @@ class GingerBuilderTest {
       long zips = files.filter(p -> p.toString().endsWith(".zip")).count();
       assertEquals(1, zips);
     }
+  }
+
+  @Test
+  void publishStatus_isNoOpWhenParentIdMissing() {
+    // No throw, no network call — exits on the parentId null check.
+    assertDoesNotThrow(() ->
+        Ginger.builder()
+            .jwt(jwt)
+            .publishStatus(UUID.randomUUID(), "RUNNING", 10, "hello"));
+  }
+
+  @Test
+  void publishStatus_isNoOpWhenSubJobIdMissing() {
+    assertDoesNotThrow(() ->
+        Ginger.builder()
+            .jwt(jwt)
+            .parentId(UUID.randomUUID())
+            .publishStatus(null, "RUNNING", 10, "hello"));
+  }
+
+  @Test
+  void publishStatus_swallowsMissingJwt() {
+    // No JWT configured — resolveJwt would throw; publishStatus catches it silently.
+    assertDoesNotThrow(() ->
+        Ginger.builder()
+            .parentId(UUID.randomUUID())
+            .publishStatus(UUID.randomUUID(), "RUNNING", 10, "hello"));
   }
 
   @Test

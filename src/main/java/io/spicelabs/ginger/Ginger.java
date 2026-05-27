@@ -173,6 +173,37 @@ public class Ginger implements Callable<Integer> {
   public Ginger submissionTimestamp(Instant ts) { this.submissionTimestamp = ts; return this; }
 
   /**
+   * Publish a sub-job status update against {@code POST /surveys/{parentId}/status}. Reuses
+   * the JWT-derived server URL plus the builder's {@code parentId}, {@code idempotencyKey},
+   * and {@code userAgent}. Intended for progress ticks during the local analyze pass: the
+   * caller supplies the sub-job id (e.g. {@code analyzeSubJobId} from {@code initSurvey}),
+   * a status (RUNNING / COMPLETED / FAILED), an optional progress percent, and an optional
+   * human-readable message.
+   *
+   * <p>Best-effort: any configuration problem (missing JWT, missing server claim) or
+   * transport error is swallowed at debug level. {@link DirectUploadService#publishStatus}
+   * imposes a 5s call timeout and silently absorbs 404 (endpoint not deployed) so a
+   * progress publish can never stall or fail the surrounding work.
+   */
+  public void publishStatus(UUID subJobId, String status, Integer progress, String message) {
+    if (parentId == null || subJobId == null || status == null) {
+      return;
+    }
+    Security.addProvider(new BouncyCastleProvider());
+    String token;
+    String server;
+    try {
+      token = resolveJwt();
+      server = resolveServerUrl();
+    } catch (Exception e) {
+      log.debug("publishStatus: skipped — could not resolve JWT/server: {}", e.getMessage());
+      return;
+    }
+    new DirectUploadService().publishStatus(
+        server, token, parentId, subJobId, status, progress, message, idempotencyKey, userAgent);
+  }
+
+  /**
    * Perform the work—encrypt (and optionally upload).
    */
   public void run() throws Exception {
