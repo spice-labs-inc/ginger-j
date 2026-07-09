@@ -66,6 +66,7 @@ public class Ginger implements Callable<Integer> {
   private static final String MIME_DEPLOY          = "application/vnd.info.deployevent";
   private static final String MIME_BIGTENT         = "application/vnd.cc.bigtent";
   private static final String MIME_RUNTIME_SURVEY  = "application/x-vnd.spicelabs.runtime-survey";
+  private static final String MIME_STATIC_SURVEY   = "application/x-vnd.spicelabs.static-survey";
 
   //── Error messages ──────────────────────────────────────────────────────────────
   private static final String ERR_INVALID_JWT = "Invalid JWT or file path: ";
@@ -92,6 +93,9 @@ public class Ginger implements Callable<Integer> {
   @Option(names = "--runtime-survey", description = "JSON file containing runtime survey data")
   private Path runtimeSurveyFile;
   private String runtimeSubject;
+
+  @Option(names = "--static-survey", description = "JSON file containing static survey data")
+  private Path staticSurveyFile;
 
   @Option(names = {"-e", "--encrypt-only"}, description = "Only encrypt; do not upload")
   private boolean encryptOnly;
@@ -137,6 +141,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger adgDir(Path adgDir) { this.adgDir = adgDir; return this; }
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
   public Ginger runtimeSurveyFile(Path f) { this.runtimeSurveyFile = f; return this; }
+  public Ginger staticSurveyFile(Path f) { this.staticSurveyFile = f; return this; }
   public Ginger runtimeSubject(String s) { this.runtimeSubject = s; return this; }
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
@@ -225,14 +230,15 @@ public class Ginger implements Callable<Integer> {
     boolean hasAdg            = adgDir != null;
     boolean hasEvents         = deploymentEventsFile != null;
     boolean hasRuntimeSurvey  = runtimeSurveyFile != null;
-    int payloadCount = (hasAdg ? 1 : 0) + (hasEvents ? 1 : 0) + (hasRuntimeSurvey ? 1 : 0);
+    boolean hasStaticSurvey   = staticSurveyFile != null;
+    int payloadCount = (hasAdg ? 1 : 0) + (hasEvents ? 1 : 0) + (hasRuntimeSurvey ? 1 : 0) + (hasStaticSurvey ? 1 : 0);
     if (payloadCount != 1) {
       throw new IllegalArgumentException(
-          "Must specify exactly one of --adg, --deployment-events, or --runtime-survey");
+          "Must specify exactly one of --adg, --deployment-events, --runtime-survey, or --static-survey");
     }
 
-    Path payload  = hasAdg ? adgDir : hasEvents ? deploymentEventsFile : runtimeSurveyFile;
-    String mime   = hasAdg ? MIME_BIGTENT : hasEvents ? MIME_DEPLOY : MIME_RUNTIME_SURVEY;
+    Path payload  = hasAdg ? adgDir : hasEvents ? deploymentEventsFile : hasRuntimeSurvey ? runtimeSurveyFile : staticSurveyFile;
+    String mime   = hasAdg ? MIME_BIGTENT : hasEvents ? MIME_DEPLOY : hasRuntimeSurvey ? MIME_RUNTIME_SURVEY : MIME_STATIC_SURVEY;
 
 
     // JWT
@@ -498,6 +504,13 @@ public class Ginger implements Callable<Integer> {
            this.runtimeSurveyFile = Paths.get(value);
          }
 
+         case "--static-survey" -> {
+           if (value == null || value.isEmpty()) {
+             throw new IllegalArgumentException("--static-survey requires a value (file path)");
+           }
+           this.staticSurveyFile = Paths.get(value);
+         }
+
          case "--output" -> {
            if (value == null || value.isEmpty()) {
              throw new IllegalArgumentException("--output requires a value (directory path)");
@@ -623,7 +636,7 @@ public class Ginger implements Callable<Integer> {
   private boolean expectsValue(String key) {
     return switch (key) {
       case "--jwt", "-j", "--uuid", "--adg", "--deployment-events",
-           "--runtime-survey", "--output", "--comment", "--comment-no-sensitive-info",
+           "--runtime-survey", "--static-survey", "--output", "--comment", "--comment-no-sensitive-info",
            "--bundle-format-version", "--target-chunk-size" -> true;
       default -> false;
     };
