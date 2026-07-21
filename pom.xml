@@ -108,6 +108,7 @@
         <logback.version>1.5.18</logback.version>
         <picocli.version>4.7.7</picocli.version>
         <okhttp.version>4.12.0</okhttp.version>
+        <kotlin-stdlib.version>1.8.21</kotlin-stdlib.version>
         <jackson.version>2.19.2</jackson.version>
         <commons-compress.version>1.27.1</commons-compress.version>
         <junit.jupiter.version>5.13.1</junit.jupiter.version>
@@ -237,6 +238,18 @@
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>${okhttp.version}</version>
+        </dependency>
+
+        <!-- okhttp 4.x is Kotlin-compiled and references
+             kotlin.jvm.internal.markers.KMappedMarker, but its POM's
+             kotlin-stdlib-jdk8 transitive is evicted by some resolvers (sbt/
+             Coursier), leaving only kotlin-stdlib-common (which lacks
+             KMappedMarker). Declare kotlin-stdlib-jdk8 explicitly so the full
+             kotlin-stdlib is always on the compile classpath. -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib-jdk8</artifactId>
+            <version>${kotlin-stdlib.version}</version>
         </dependency>
 
         <dependency>
