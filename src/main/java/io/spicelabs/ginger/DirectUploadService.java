@@ -259,6 +259,28 @@ public class DirectUploadService {
             String message,
             UUID idempotencyKey,
             String userAgent) {
+        publishStatus(baseUrl, jwt, parentId, subJobId, status, progress, message,
+                idempotencyKey, userAgent, null);
+    }
+
+    /**
+     * Variant of {@link #publishStatus(String, String, UUID, UUID, String, Integer, String,
+     * UUID, String)} that additionally attaches an {@code analyzeStats} object to the body.
+     * Intended for the terminal ANALYZE status post: the caller reports what the analyzer
+     * encountered vs what it processed so the server can detect silent truncation. Servers
+     * that predate the field ignore it.
+     */
+    public void publishStatus(
+            String baseUrl,
+            String jwt,
+            UUID parentId,
+            UUID subJobId,
+            String status,
+            Integer progress,
+            String message,
+            UUID idempotencyKey,
+            String userAgent,
+            Map<String, Object> analyzeStats) {
         if (parentId == null || subJobId == null || status == null) {
             return;
         }
@@ -271,6 +293,9 @@ public class DirectUploadService {
         }
         if (message != null) {
             body.put("message", message);
+        }
+        if (analyzeStats != null && !analyzeStats.isEmpty()) {
+            body.put("analyzeStats", analyzeStats);
         }
         String jsonBody;
         try {

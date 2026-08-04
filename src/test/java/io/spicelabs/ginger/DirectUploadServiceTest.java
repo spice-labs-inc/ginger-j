@@ -10,6 +10,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -464,6 +465,50 @@ class DirectUploadServiceTest {
         assertTrue(body.contains("\"subJobId\":\"" + subJobId + "\""));
         assertTrue(body.contains("\"status\":\"RUNNING\""));
         assertTrue(body.contains("\"progress\":42"));
+    }
+
+    @Test
+    void publishStatus_includesAnalyzeStatsWhenProvided() throws Exception {
+        mockServer.enqueue(new MockResponse().setResponseCode(204));
+
+        UUID parentId = UUID.randomUUID();
+        service.publishStatus(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "jwt",
+                parentId,
+                UUID.randomUUID(),
+                "COMPLETED",
+                100,
+                "Analysis complete",
+                UUID.randomUUID(),
+                "spice-labs-cli/test",
+                Map.of("filesEncountered", 12, "bytesEncountered", 3456));
+
+        RecordedRequest req = mockServer.takeRequest();
+        assertEquals("/api/global/v1/surveys/" + parentId + "/status", req.getPath());
+        String body = req.getBody().readUtf8();
+        assertTrue(body.contains("\"analyzeStats\""));
+        assertTrue(body.contains("\"filesEncountered\":12"));
+        assertTrue(body.contains("\"bytesEncountered\":3456"));
+    }
+
+    @Test
+    void publishStatus_omitsAnalyzeStatsWhenAbsent() throws Exception {
+        mockServer.enqueue(new MockResponse().setResponseCode(204));
+
+        service.publishStatus(
+                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                "jwt",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "RUNNING",
+                10,
+                null,
+                UUID.randomUUID(),
+                null);
+
+        RecordedRequest req = mockServer.takeRequest();
+        assertFalse(req.getBody().readUtf8().contains("analyzeStats"));
     }
 
     @Test

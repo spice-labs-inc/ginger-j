@@ -204,6 +204,17 @@ public class Ginger implements Callable<Integer> {
    * progress publish can never stall or fail the surrounding work.
    */
   public void publishStatus(UUID subJobId, String status, Integer progress, String message) {
+    publishStatus(subJobId, status, progress, message, null);
+  }
+
+  /**
+   * Variant of {@link #publishStatus(UUID, String, Integer, String)} that additionally
+   * attaches an {@code analyzeStats} object to the status body. Meant for the terminal
+   * ANALYZE post: counts of what the analyzer encountered vs processed, so the server can
+   * detect silent truncation. Servers that predate the field ignore it.
+   */
+  public void publishStatus(UUID subJobId, String status, Integer progress, String message,
+      Map<String, Object> analyzeStats) {
     if (parentId == null || subJobId == null || status == null) {
       return;
     }
@@ -218,7 +229,8 @@ public class Ginger implements Callable<Integer> {
       return;
     }
     new DirectUploadService().publishStatus(
-        server, token, parentId, subJobId, status, progress, message, idempotencyKey, userAgent);
+        server, token, parentId, subJobId, status, progress, message, idempotencyKey, userAgent,
+        analyzeStats);
   }
 
   /**
