@@ -35,6 +35,11 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.spicelabs.config.LogbackLogging;
+import io.spicelabs.config.Logging;
+import io.spicelabs.config.Resolver;
+import io.spicelabs.config.TomlFile;
+
 import com.fasterxml.jackson.databind.JsonNode;
 
 import picocli.CommandLine;
@@ -77,6 +82,15 @@ public class Ginger implements Callable<Integer> {
   private static final String ERR_EXP_INVALID = "exp claim missing or invalid";
 
   //── Picocli-bound options ──────────────────────────────────────────────────────
+
+  @Option(names = "--log-level", description = "error, warn, info, debug or trace (default: info)")
+  String logLevel;
+
+  @Option(names = "--log-file", paramLabel = "FILE", description = "Also write log output to this file")
+  String logFile;
+
+  @Option(names = "--config", paramLabel = "FILE", description = "TOML configuration file")
+  java.nio.file.Path configFile;
 
   @Option(names = {"-j", "--jwt"}, description = "JWT string or file path" /* , required = true*/)
   private String jwt;
@@ -345,11 +359,43 @@ public class Ginger implements Callable<Integer> {
 
   public static void main(String[] args) {
     Security.addProvider(new BouncyCastleProvider());
-    int exitCode = new CommandLine(new Ginger())
-        .setExecutionStrategy(new CommandLine.RunLast())
+    Ginger ginger = new Ginger();
+    int exitCode = new CommandLine(ginger)
+        .setExecutionStrategy(parseResult -> {
+          // Logging is configured here and not in run(): when this class is used as a
+          // library the host owns logging, and a library that reconfigures the logging of
+          // whatever embedded it is a rude surprise. `main` owns the process, so it may.
+          ginger.applyLogging();
+          return new CommandLine.RunLast().execute(parseResult);
+        })
         .execute(args);
     System.exit(exitCode);
   }
+
+  /**
+   * Apply the {@code [logging]} group — the same group, keys and precedence as every other
+   * Spice tool.
+   *
+   * <p>Package-private and called only from {@link #main}: see the note there.
+   */
+  void applyLogging() {
+    Resolver resolver = new Resolver(
+        ENVIRONMENT_PREFIX, java.util.Set.of(Logging.GROUP), message -> log.info("{}", message));
+    resolver.withDefaults(Logging.defaults());
+    if (configFile != null) {
+      resolver.withFile(configFile, TomlFile.parse(configFile), java.util.List.of());
+    }
+    LogbackLogging.apply(
+        resolver
+            .withEnvironment(System.getenv())
+            .withFlag(Logging.GROUP, "level", logLevel, "--log-level")
+            .withFlag(Logging.GROUP, "file", logFile, "--log-file")
+            .resolve(),
+        "io.spicelabs.ginger");
+  }
+
+  /** The environment-variable prefix when this runs standalone. */
+  static final String ENVIRONMENT_PREFIX = "GINGER";
 
   //── Configuration resolution helpers ────────────────────────────────────────────
 

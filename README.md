@@ -8,6 +8,31 @@
 
 ---
 
+## Logging
+
+```
+--log-level <l>    error, warn, info, debug or trace (default: info)
+--log-file <path>  Also write log output to this file
+--config <file>    TOML configuration file
+```
+
+These are the `[logging]` group, shared with every other Spice command-line tool — the same
+keys, the same precedence, and the same names in every form:
+
+```toml
+[logging]
+level = "debug"
+file = "/tmp/ginger.log"
+```
+
+    defaults  <  [logging]  <  GINGER_LOGGING_*  <  command line
+
+Embedded in `spice`, the prefix is `SPICE_` and nothing else changes.
+
+**Used as a library, this configures nothing.** The group is applied by `main` only: the host
+program chose its own logging deliberately, and a library that reconfigures it is a rude
+surprise.
+
 ## ✨ Features
 
 - 🔐 End-to-end encryption using your **Spice Pass** (JWT-based auth)
