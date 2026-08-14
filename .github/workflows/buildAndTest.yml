@@ -11,6 +11,11 @@ jobs:
   build:
     name: Build and Test
     runs-on: ubuntu-24.04
+    # spice-config resolves only from GitHub Packages, which requires
+    # authentication even for public reads.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -21,12 +26,21 @@ jobs:
           java-version: "21"
           distribution: "temurin"
           cache: maven
+          server-id: github-spice-config
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
 
       - name: Install Dependencies and Build
         run: mvn --batch-mode --update-snapshots -DskipTests install
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test with Maven
         run: mvn --batch-mode --update-snapshots verify
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
     #   - name: Collect Artifacts
     #     run: mkdir staging && cp target/*.jar staging

@@ -116,6 +116,24 @@
         <mockito.version>5.3.1</mockito.version>
     </properties>
 
+    <!-- The first non-Central dependency this build has had. spice-config carries the
+         naming, layering and precedence rules every Spice component shares, and it
+         publishes only to GitHub Packages under its own repo — each GitHub Packages URL
+         serves one repository's artifacts, so there is nowhere else to look.
+
+         GitHub Packages requires authentication even for public reads, so resolving
+         this needs a settings.xml with a server whose id matches the one below. See the
+         note in .github/workflows/buildAndTest.yml. -->
+    <repositories>
+        <repository>
+            <id>github-spice-config</id>
+            <name>GitHub Packages (spice-labs-inc/spice-config)</name>
+            <url>https://maven.pkg.github.com/spice-labs-inc/spice-config</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+
     <build>
         <plugins>
             <plugin>
