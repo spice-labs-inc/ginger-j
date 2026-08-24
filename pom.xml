@@ -215,6 +215,15 @@
     </build>
 
     <dependencies>
+        <!-- The naming, layering and precedence rules shared with every other Spice
+             component, and the `[logging]` group in particular. One implementation, so a
+             log level means the same thing here as it does in `spice`. -->
+        <dependency>
+            <groupId>io.spicelabs</groupId>
+            <artifactId>spice-config</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
