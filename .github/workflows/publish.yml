@@ -12,6 +12,7 @@ jobs:
       packages: write
     outputs:
       version: ${{ steps.tag.outputs.version }}
+      successor-ok: ${{ steps.tag.outputs.successor_ok }}
       thread-ts: ${{ steps.release-notification.outputs.thread-ts }}
       channel-id: ${{ steps.release-notification.outputs.channel-id }}
 
@@ -28,21 +29,21 @@ jobs:
 
       - name: Checkout Code
         uses: actions/checkout@v5
+        with:
+          # Full history and tags: the successor check compares this release
+          # tag against every previously released version.
+          fetch-depth: 0
 
-      - name: Get version from tag (strip 'v')
+      - name: Validate the release tag
         id: tag
+        env:
+          # tag_name is "vX.Y.Z" (no refs/tags/ prefix) for the release event.
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          RAW_TAG="${{ github.event.release.tag_name }}"
-          VERSION="${RAW_TAG#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Validate version format (X.Y.Z)
-        run: |
-          VERSION="${{ steps.tag.outputs.version }}"
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Invalid version format: $VERSION"
-            exit 1
-          fi
+          set -euo pipefail
+          git tag --list > /tmp/all-tags.txt
+          python3 .github/scripts/check-release-tag.py \
+            "${TAG_NAME}" /tmp/all-tags.txt >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -74,7 +75,9 @@ jobs:
         run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
       - name: Publish to Maven Central
-        run: mvn --batch-mode deploy -P maven-central
+        run: |
+          mvn --batch-mode deploy -P maven-central \
+            -Dcentral.autoPublish=${{ steps.tag.outputs.auto_publish }}
         env:
           GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
 
@@ -96,6 +99,37 @@ jobs:
           input: "${{ github.workspace }}"
           subject: "${{ github.event.repository.name }}"
 
+      # `mvn deploy` succeeds even when the deployment is only staged, so without
+      # this the run would go green with nothing on Maven Central -- a version
+      # everyone believes shipped but consumers cannot resolve. Fail the run so a
+      # parked release is impossible to miss.
+      - name: Flag release awaiting manual confirmation
+        if: steps.tag.outputs.successor_ok != 'true'
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          PREVIOUS: ${{ steps.tag.outputs.previous }}
+        run: |
+          {
+            echo "## :warning: Maven Central release awaiting manual confirmation"
+            echo
+            if [ -n "${PREVIOUS}" ]; then
+              echo "\`${TAG_NAME}\` is not a natural successor to \`${PREVIOUS}\`."
+              echo "Expected one of: ${{ steps.tag.outputs.expected }}."
+            else
+              echo "\`${TAG_NAME}\` is lower than every existing release."
+            fi
+            echo
+            echo "The deployment was uploaded and validated, but **has not been published**."
+            echo "It is waiting in the [Central Portal](https://central.sonatype.com/publishing/deployments):"
+            echo
+            echo "- **Publish** it if this version number is deliberate."
+            echo "- **Drop** it otherwise, then delete the \`${TAG_NAME}\` release and tag and cut the correct version."
+            echo
+            echo "GitHub Packages already has \`${TAG_NAME}\`; delete that package version too if you drop this."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Maven Central release awaiting confirmation::${TAG_NAME} was not published automatically${PREVIOUS:+ (does not follow ${PREVIOUS})}. The deployment is parked in the Central Portal and must be published or dropped by hand."
+          exit 1
+
   notify:
     needs: [publish]
     if: always()
@@ -107,14 +141,24 @@ jobs:
         run: |
           # Check job outcomes
           PUBLISH_STATUS="${{ needs.publish.result }}"
+          SUCCESSOR_OK="${{ needs.publish.outputs.successor-ok }}"
 
           # Determine overall success
           if [ "$PUBLISH_STATUS" == "success" ]; then
             echo "overall_status=success" >> $GITHUB_OUTPUT
             echo "message=✅ All components published successfully!" >> $GITHUB_OUTPUT
+            echo "workflow_name=${{ github.workflow }}" >> $GITHUB_OUTPUT
+          elif [ "$SUCCESSOR_OK" == "false" ]; then
+            # Staged, not failed: the artifacts are uploaded and validated but
+            # parked in the Central Portal pending a human decision. Reported as
+            # a failure because nothing is on Maven Central yet.
+            echo "overall_status=failure" >> $GITHUB_OUTPUT
+            echo "message=⚠️ Awaiting manual confirmation in the Maven Central Portal." >> $GITHUB_OUTPUT
+            echo "workflow_name=${{ github.workflow }} — AWAITING MANUAL CONFIRMATION in the Maven Central Portal" >> $GITHUB_OUTPUT
           else
             echo "overall_status=failure" >> $GITHUB_OUTPUT
             echo "message=❌ Publishing failed" >> $GITHUB_OUTPUT
+            echo "workflow_name=${{ github.workflow }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Notify deployment result
@@ -124,6 +168,7 @@ jobs:
           slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
           username-mapping: ${{ secrets.GH_SLACK_USERNAME_MAPPING }}
           github-token: ${{ github.token }}
+          workflow-name: ${{ steps.deployment-status.outputs.workflow_name }}
           environment: production
           thread-ts: ${{ needs.publish.outputs.thread-ts }}
           channel-id: ${{ needs.publish.outputs.channel-id }}
