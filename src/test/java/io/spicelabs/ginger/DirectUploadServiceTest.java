@@ -96,7 +96,7 @@ class DirectUploadServiceTest {
                 bundleId));
 
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -106,7 +106,7 @@ class DirectUploadServiceTest {
         assertEquals(1, storageServer.getRequestCount());
 
         RecordedRequest initRequest = mockServer.takeRequest();
-        assertEquals("/api/global/v1/bundle/upload/init", initRequest.getPath());
+        assertEquals("/api/v1/project/p1/bundle/upload/init", initRequest.getPath());
         assertEquals("Bearer test-jwt", initRequest.getHeader("Authorization"));
         assertTrue(initRequest.getBody().readUtf8().contains("\"sha256\":"));
 
@@ -118,7 +118,7 @@ class DirectUploadServiceTest {
         RecordedRequest req;
         String completeBody = null;
         while ((req = mockServer.takeRequest(1, TimeUnit.SECONDS)) != null) {
-            if (req.getPath().equals("/api/global/v1/bundle/upload/complete")) {
+            if (req.getPath().equals("/api/v1/project/p1/bundle/upload/complete")) {
                 completeBody = req.getBody().readUtf8();
             }
         }
@@ -136,7 +136,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                         "bad-jwt",
                         null,
                         testBundle,
@@ -160,7 +160,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -194,7 +194,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -221,7 +221,7 @@ class DirectUploadServiceTest {
         enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -253,7 +253,7 @@ class DirectUploadServiceTest {
         enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 publicKeyPem,
                 testBundle,
@@ -269,7 +269,7 @@ class DirectUploadServiceTest {
     void uploadDirect_challengeWithoutPublicKey_throws() {
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -294,7 +294,7 @@ class DirectUploadServiceTest {
         // Progress (fire-and-forget) and complete race; serve the complete body for both slots.
         enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
 
-        String baseUrl = mockServer.url("/api/global/v1/bundle/upload").toString();
+        String baseUrl = mockServer.url("/api/v1/project/p1/bundle/upload").toString();
         if (!baseUrl.endsWith("/")) {
             baseUrl = baseUrl + "/";
         }
@@ -308,7 +308,7 @@ class DirectUploadServiceTest {
                 null);
 
         RecordedRequest initRequest = mockServer.takeRequest();
-        assertEquals("/api/global/v1/bundle/upload/init", initRequest.getPath());
+        assertEquals("/api/v1/project/p1/bundle/upload/init", initRequest.getPath());
     }
 
     @Test
@@ -323,7 +323,7 @@ class DirectUploadServiceTest {
 
         IOException ex = assertThrows(IOException.class, () ->
                 service.uploadDirect(
-                        mockServer.url("/api/global/v1/bundle/upload").toString(),
+                        mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                         "test-jwt",
                         null,
                         testBundle,
@@ -356,7 +356,7 @@ class DirectUploadServiceTest {
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, null, idemp, null);
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -392,7 +392,7 @@ class DirectUploadServiceTest {
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, parentId, null, null);
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,
@@ -419,7 +419,7 @@ class DirectUploadServiceTest {
 
         UUID idemp = UUID.randomUUID();
         DirectUploadService.InitSurveyResponse response = service.initSurvey(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 new DirectUploadService.InitSurveyRequest("INVENTORY_SURVEY", "v1", null),
                 idemp,
@@ -431,7 +431,7 @@ class DirectUploadServiceTest {
         assertEquals(Instant.parse("2026-05-20T12:00:00Z"), response.submissionTimestamp());
 
         RecordedRequest req = mockServer.takeRequest();
-        assertEquals("/api/global/v1/surveys", req.getPath());
+        assertEquals("/api/v1/project/p1/survey", req.getPath());
         assertEquals("Bearer test-jwt", req.getHeader("Authorization"));
         assertEquals(idemp.toString(), req.getHeader("Idempotency-Key"));
         assertEquals("spice-labs-cli/test", req.getHeader("User-Agent"));
@@ -446,7 +446,7 @@ class DirectUploadServiceTest {
         UUID subJobId = UUID.randomUUID();
         UUID idemp = UUID.randomUUID();
         service.publishStatus(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "jwt",
                 parentId,
                 subJobId,
@@ -457,7 +457,7 @@ class DirectUploadServiceTest {
                 "spice-labs-cli/test");
 
         RecordedRequest req = mockServer.takeRequest();
-        assertEquals("/api/global/v1/surveys/" + parentId + "/status", req.getPath());
+        assertEquals("/api/v1/project/p1/survey/" + parentId + "/status", req.getPath());
         assertEquals(idemp.toString(), req.getHeader("Idempotency-Key"));
         assertEquals("spice-labs-cli/test", req.getHeader("User-Agent"));
         String body = req.getBody().readUtf8();
@@ -472,7 +472,7 @@ class DirectUploadServiceTest {
 
         // Should not throw — best-effort progress reporting.
         service.publishStatus(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "jwt",
                 UUID.randomUUID(),
                 UUID.randomUUID(),
@@ -502,7 +502,7 @@ class DirectUploadServiceTest {
     @Test
     void initSurvey_requiresIdempotencyKey() {
         assertThrows(IllegalArgumentException.class, () -> service.initSurvey(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "jwt",
                 new DirectUploadService.InitSurveyRequest("INVENTORY_SURVEY", null, null),
                 null,
@@ -521,7 +521,7 @@ class DirectUploadServiceTest {
         DirectUploadService.UploadOptions opts = new DirectUploadService.UploadOptions(
                 null, null, null, null, null, "spice-labs-cli/1.2.3");
         service.uploadDirect(
-                mockServer.url("/api/global/v1/bundle/upload").toString(),
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
                 "test-jwt",
                 null,
                 testBundle,

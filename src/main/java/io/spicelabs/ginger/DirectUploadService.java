@@ -183,11 +183,11 @@ public class DirectUploadService {
     }
 
     /**
-     * Mint a survey parent on daikon via {@code POST /surveys}. Returns the parent id and
+     * Mint a survey parent on daikon via {@code POST /survey}. Returns the parent id and
      * any sub-job ids daikon allocated.
      *
      * @param baseUrl                upload base URL (the same JWT-derived URL the upload
-     *                               methods use; the surveys endpoint is computed from it).
+     *                               methods use; the survey endpoint is computed from it).
      * @param jwt                    bearer token.
      * @param request                request body — {@code jobType} required, others optional.
      * @param idempotencyKey         required by daikon; reused on retry to return the
@@ -202,9 +202,9 @@ public class DirectUploadService {
             String userAgent)
             throws IOException {
         if (idempotencyKey == null) {
-            throw new IllegalArgumentException("idempotencyKey is required for POST /surveys");
+            throw new IllegalArgumentException("idempotencyKey is required for POST /survey");
         }
-        String url = surveysUrl(baseUrl);
+        String url = surveyUrl(baseUrl);
         String jsonBody = MAPPER.writeValueAsString(request);
         Supplier<Request> requestSupplier = () -> {
             Request.Builder b = new Request.Builder()
@@ -228,20 +228,20 @@ public class DirectUploadService {
     }
 
     /**
-     * Derive the project-scoped surveys URL from the upload base URL. The upload base URL
-     * points at {@code .../bundle/upload}; the surveys endpoint is a sibling at
-     * {@code .../surveys}.
+     * Derive the project-scoped survey URL from the upload base URL. The upload base URL
+     * points at {@code .../bundle/upload}; the survey endpoint is a sibling at
+     * {@code .../survey}.
      */
-    private static String surveysUrl(String baseUrl) {
+    private static String surveyUrl(String baseUrl) {
         String normalized = normalizeUrl(baseUrl);
         String marker = "/bundle/upload";
         int idx = normalized.lastIndexOf(marker);
         String projectBase = idx >= 0 ? normalized.substring(0, idx) : normalized;
-        return projectBase + "/surveys";
+        return projectBase + "/survey";
     }
 
     /**
-     * Publish a sub-job status update to {@code POST /surveys/{parentId}/status}. Best-effort:
+     * Publish a sub-job status update to {@code POST /survey/{parentId}/status}. Best-effort:
      * 404 (endpoint not deployed yet on this daikon) and any network/transport error are
      * swallowed silently — phase-level progress is informational, not load-bearing. Other
      * non-2xx responses are logged at WARN level but do not throw.
@@ -262,7 +262,7 @@ public class DirectUploadService {
         if (parentId == null || subJobId == null || status == null) {
             return;
         }
-        String url = surveysUrl(baseUrl) + "/" + parentId + "/status";
+        String url = surveyUrl(baseUrl) + "/" + parentId + "/status";
         Map<String, Object> body = new HashMap<>();
         body.put("subJobId", subJobId.toString());
         body.put("status", status);

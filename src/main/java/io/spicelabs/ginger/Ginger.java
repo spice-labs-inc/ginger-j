@@ -173,7 +173,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger idempotencyKey(UUID key) { this.idempotencyKey = key; return this; }
 
   /**
-   * Parent survey id from a prior {@code POST /surveys} call. When set, the upload-init
+   * Parent survey id from a prior {@code POST /survey} call. When set, the upload-init
    * request reuses that survey row instead of minting a new one.
    */
   public Ginger parentId(UUID parentId) { this.parentId = parentId; return this; }
@@ -185,7 +185,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger userAgent(String ua) { this.userAgent = ua; return this; }
 
   /**
-   * Server-minted submission timestamp returned by {@code POST /surveys}. Stamped into the
+   * Server-minted submission timestamp returned by {@code POST /survey}. Stamped into the
    * bundle as its date so the artifact never carries a client clock value. The CLI reads it
    * from the {@code initSurvey} response and passes it back in here. When unset, the bundle
    * date falls back to local time (encrypt-only / legacy uploads).
@@ -205,7 +205,7 @@ public class Ginger implements Callable<Integer> {
   public Ginger afterBundleWrapped(Runnable callback) { this.afterBundleWrapped = callback; return this; }
 
   /**
-   * Publish a sub-job status update against {@code POST /surveys/{parentId}/status}. Reuses
+   * Publish a sub-job status update against {@code POST /survey/{parentId}/status}. Reuses
    * the JWT-derived server URL plus the builder's {@code parentId}, {@code idempotencyKey},
    * and {@code userAgent}. Intended for progress ticks during the local analyze pass: the
    * caller supplies the sub-job id (e.g. {@code analyzeSubJobId} from {@code initSurvey}),
@@ -601,49 +601,19 @@ public class Ginger implements Callable<Integer> {
 
   /**
    * Download the runtime survey probe config from the server.
-   * Uses the JWT to authenticate via daikon proxy → fennel.
    *
    * @param outputPath path to write the probe config JSON file
    * @return true if download succeeded
    */
   public boolean downloadRuntimeConfig(Path outputPath) throws Exception {
-    Security.addProvider(new BouncyCastleProvider());
-    String token = resolveJwt();
-    String server = resolveServerUrl();
-    Optional<String> projId = resolveUuid();
-
-    // Build URL: server/api/project/v1/survey/runtime/config
-    String url = server;
-    if (!url.endsWith("/")) url += "/";
-    url += "api/project/v1/survey/runtime/config";
-
-    log.info("Downloading runtime probe config from {}", url);
-
-    okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build();
-
-    okhttp3.Request request = new okhttp3.Request.Builder()
-        .url(url)
-        .addHeader("Authorization", "Bearer " + token)
-        .get()
-        .build();
-
-    try (okhttp3.Response response = client.newCall(request).execute()) {
-      if (!response.isSuccessful()) {
-        log.error("Failed to download runtime config: HTTP {}", response.code());
-        return false;
-      }
-      if (response.body() == null) {
-        log.error("Empty response body from runtime config endpoint");
-        return false;
-      }
-      Files.createDirectories(outputPath.getParent());
-      Files.writeString(outputPath, response.body().string(), StandardCharsets.UTF_8);
-      log.info("Downloaded probe config to {}", outputPath);
-      return true;
+    byte[] config = downloadRuntimeConfigBytes();
+    if (config == null) {
+      return false;
     }
+    Files.createDirectories(outputPath.getParent());
+    Files.write(outputPath, config);
+    log.info("Downloaded probe config to {}", outputPath);
+    return true;
   }
 
   public byte[] downloadRuntimeConfigBytes() throws Exception {
