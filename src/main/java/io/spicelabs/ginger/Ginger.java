@@ -106,9 +106,11 @@ public class Ginger implements Callable<Integer> {
 
   @Option(names = "--runtime-survey", description = "JSON file containing runtime survey data")
   private Path runtimeSurveyFile;
-  private String runtimeSubject;
+  private String subject;
 
-  @Option(names = "--static-survey", description = "JSON file containing static survey data")
+  // A Sassafras ScanResult, as written by `spice survey static` (the allspice plugin).
+  // Fennel's static_pqc processor reads it into a pqc-static report.
+  @Option(names = "--static-survey", description = "JSON file containing static survey data (a Sassafras ScanResult)")
   private Path staticSurveyFile;
 
   @Option(names = {"-e", "--encrypt-only"}, description = "Only encrypt; do not upload")
@@ -155,8 +157,23 @@ public class Ginger implements Callable<Integer> {
   public Ginger adgDir(Path adgDir) { this.adgDir = adgDir; return this; }
   public Ginger deploymentEventsFile(Path f) { this.deploymentEventsFile = f; return this; }
   public Ginger runtimeSurveyFile(Path f) { this.runtimeSurveyFile = f; return this; }
+
+  /**
+   * A static survey to upload: the Sassafras {@code ScanResult} JSON that {@code spice survey
+   * static} writes. It is uploaded as {@code application/x-vnd.spicelabs.static-survey}, which
+   * the platform turns into a {@code STATIC_SURVEY} job and a {@code pqc-static} report.
+   */
   public Ginger staticSurveyFile(Path f) { this.staticSurveyFile = f; return this; }
-  public Ginger runtimeSubject(String s) { this.runtimeSubject = s; return this; }
+
+  /**
+   * What the survey is of, sent as the upload's {@code tag} so the platform can group surveys of
+   * the same subject. Applies to every payload type.
+   */
+  public Ginger subject(String s) { this.subject = s; return this; }
+
+  /** The name {@link #subject(String)} had when only runtime surveys carried one. */
+  public Ginger runtimeSubject(String s) { return subject(s); }
+
   public Ginger encryptOnly(boolean e) { this.encryptOnly = e; return this; }
   public Ginger skipKey(boolean s) {this.skipKey = s; return this;}
   public Ginger comment(String c) { this.comment = c; return this; }
@@ -317,9 +334,9 @@ public class Ginger implements Callable<Integer> {
     }
     
     Map<String, Object> initMetadata = null;
-    if (runtimeSubject != null) {
+    if (subject != null) {
       initMetadata = new HashMap<>();
-      initMetadata.put("tag", runtimeSubject);
+      initMetadata.put("tag", subject);
     }
 
     DirectUploadService.UploadOptions options = new DirectUploadService.UploadOptions(

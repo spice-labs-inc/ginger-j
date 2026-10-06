@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
+import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -203,6 +204,54 @@ class GingerBuilderTest {
         .runtimeSurveyFile(surveyFile)
         .encryptOnly(true);
     assertDoesNotThrow(g::run);
+  }
+
+  @Test
+  void bothInputs_runtimeAndStaticSurvey_throws() throws IOException {
+    Path surveyFile = writeStaticSurvey();
+    assertThrows(Exception.class, () -> Ginger.builder()
+        .jwt(jwt)
+        .runtimeSurveyFile(surveyFile)
+        .staticSurveyFile(surveyFile)
+        .encryptOnly(true)
+        .run(), "Must throw if both inputs are set");
+  }
+
+  @Test
+  void staticSurveyOnly_noOtherInputs_accepted() throws Exception {
+    Ginger g = Ginger.builder()
+        .jwt(jwt)
+        .staticSurveyFile(writeStaticSurvey())
+        .encryptOnly(true);
+    assertDoesNotThrow(g::run);
+  }
+
+  @Test
+  void encryptOnly_staticSurvey_createsZipWithStaticSurveyMime() throws Exception {
+    Ginger.builder()
+        .jwt(jwt)
+        .staticSurveyFile(writeStaticSurvey())
+        .subject("app.jar")
+        .encryptOnly(true)
+        .run();
+
+    Path zip;
+    try (Stream<Path> files = Files.walk(tmp)) {
+      zip = files.filter(p -> p.toString().endsWith(".zip")).findFirst().orElseThrow();
+    }
+    try (ZipFile zf = new ZipFile(zip.toFile())) {
+      String mime = new String(zf.getInputStream(zf.getEntry("mime.txt")).readAllBytes(),
+          StandardCharsets.UTF_8);
+      assertEquals("application/x-vnd.spicelabs.static-survey", mime);
+    }
+  }
+
+  private Path writeStaticSurvey() throws IOException {
+    Path surveyFile = tmp.resolve("lintium.json");
+    Files.writeString(surveyFile,
+        "{\"gitoid_sha256\":\"gitoid:blob:sha256:00\",\"artifact\":{\"path\":\"app.jar\"},\"findings\":[]}",
+        StandardCharsets.UTF_8);
+    return surveyFile;
   }
 
   public static String makeDummyJwt() {
