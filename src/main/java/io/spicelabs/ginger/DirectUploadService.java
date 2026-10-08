@@ -18,6 +18,7 @@ package io.spicelabs.ginger;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,6 +28,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -35,6 +37,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+
+import javax.net.ssl.SSLException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,8 +64,20 @@ public class DirectUploadService {
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
     private static final int MAX_RETRIES = 3;
-    private static final long INITIAL_BACKOFF_MS = 1000;
     private static final int PARALLEL_UPLOADS = 4;
+
+    /**
+     * How long to back off between attempts, doubling from {@code first} up to {@code longest},
+     * and how long after the first attempt a failure a restart produces is still retried.
+     */
+    record RetryPolicy(Duration first, Duration longest, Duration window) {}
+
+    /** Covers a server restart, which takes 30 to 60 seconds. */
+    static final RetryPolicy RESTART_POLICY =
+            new RetryPolicy(Duration.ofSeconds(1), Duration.ofSeconds(15), Duration.ofSeconds(60));
+
+    /** What a gateway or a restarting server answers; every other 5xx is retried only {@link #MAX_RETRIES} times. */
+    private static final Set<Integer> RESTART_STATUSES = Set.of(502, 503, 504);
 
     private static final OkHttpClient DEFAULT_CLIENT = new OkHttpClient()
             .newBuilder()
@@ -74,13 +90,19 @@ public class DirectUploadService {
     private static final MediaType OCTET_STREAM = MediaType.parse("application/octet-stream");
 
     private final OkHttpClient client;
+    private final RetryPolicy retryPolicy;
 
     public DirectUploadService() {
         this(DEFAULT_CLIENT);
     }
 
     public DirectUploadService(OkHttpClient client) {
+        this(client, RESTART_POLICY);
+    }
+
+    DirectUploadService(OkHttpClient client, RetryPolicy retryPolicy) {
         this.client = client;
+        this.retryPolicy = retryPolicy;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -713,13 +735,22 @@ public class DirectUploadService {
         return executeWithRetry(requestSupplier, operationName, null);
     }
 
+    /**
+     * Retries a failed call: up to {@link #MAX_RETRIES} attempts for any server error or transport
+     * failure, and for as long as {@link RetryPolicy#window()} for the failures a server restart
+     * produces, so an upload survives one. Client errors (4xx) are returned at once.
+     */
     private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName, Runnable onRetry) throws IOException {
         IOException lastException = null;
         String lastResponseBody = null;
         int lastCode = 0;
-        long backoffMs = INITIAL_BACKOFF_MS;
+        long backoffMs = retryPolicy.first().toMillis();
+        long startedAt = System.nanoTime();
+        int attempt = 0;
 
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        while (true) {
+            attempt++;
+            boolean restartLike;
             Response response = null;
             try {
                 response = client.newCall(requestSupplier.get()).execute();
@@ -730,45 +761,51 @@ public class DirectUploadService {
 
                 lastResponseBody = response.body() != null ? response.body().string() : "";
                 lastCode = response.code();
+                lastException = null;
                 response.close();
-                response = null;
-
-                if (attempt < MAX_RETRIES) {
-                    log.warn("{} failed with {} (attempt {}/{}), retrying in {}ms",
-                            operationName, lastCode, attempt, MAX_RETRIES, backoffMs);
-                    if (onRetry != null) {
-                        onRetry.run();
-                    }
-                    TimeUnit.MILLISECONDS.sleep(backoffMs);
-                    backoffMs *= 2;
-                }
+                restartLike = RESTART_STATUSES.contains(lastCode);
             } catch (IOException e) {
                 if (response != null) response.close();
-                lastException = e;
-                if (attempt < MAX_RETRIES) {
-                    log.warn("{} failed (attempt {}/{}), retrying in {}ms: {}",
-                            operationName, attempt, MAX_RETRIES, backoffMs, e.getMessage());
-                    if (onRetry != null) {
-                        onRetry.run();
-                    }
-                    try {
-                        TimeUnit.MILLISECONDS.sleep(backoffMs);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Interrupted during retry", ie);
-                    }
-                    backoffMs *= 2;
+                if (Thread.currentThread().isInterrupted()) {
+                    throw e;
                 }
-            } catch (InterruptedException e) {
-                if (response != null) response.close();
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted during retry", e);
+                lastException = e;
+                restartLike = isRestartLike(e);
             }
+
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            boolean retry = attempt < MAX_RETRIES
+                    || (restartLike && elapsedMs + backoffMs <= retryPolicy.window().toMillis());
+            if (!retry) {
+                break;
+            }
+            if (lastException != null) {
+                log.warn("{} failed (attempt {}), retrying in {}ms: {}",
+                        operationName, attempt, backoffMs, lastException.getMessage());
+            } else {
+                log.warn("{} failed with {} (attempt {}), retrying in {}ms",
+                        operationName, lastCode, attempt, backoffMs);
+            }
+            if (onRetry != null) {
+                onRetry.run();
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(backoffMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted during retry", ie);
+            }
+            backoffMs = Math.min(backoffMs * 2, retryPolicy.longest().toMillis());
         }
 
         if (lastException != null) {
             throw lastException;
         }
-        throw new IOException(operationName + " failed after " + MAX_RETRIES + " attempts: " + lastCode + " " + lastResponseBody);
+        throw new IOException(operationName + " failed after " + attempt + " attempts: " + lastCode + " " + lastResponseBody);
+    }
+
+    /** A host that does not resolve or a TLS failure is a setup problem that waiting will not fix. */
+    static boolean isRestartLike(IOException e) {
+        return !(e instanceof UnknownHostException) && !(e instanceof SSLException);
     }
 }
