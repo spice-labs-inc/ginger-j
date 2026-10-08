@@ -5,13 +5,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.SSLHandshakeException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -543,4 +549,131 @@ class DirectUploadServiceTest {
         assertTrue(completeUA, "complete request should carry User-Agent");
     }
 
+    private static final DirectUploadService.RetryPolicy FAST_RESTART =
+            new DirectUploadService.RetryPolicy(Duration.ofMillis(5), Duration.ofMillis(20), Duration.ofSeconds(2));
+
+    private DirectUploadService fastRetryService() {
+        OkHttpClient testClient = new OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
+                .writeTimeout(5, TimeUnit.SECONDS)
+                .build();
+        return new DirectUploadService(testClient, FAST_RESTART);
+    }
+
+    private void enqueueInitAndRest() {
+        String presignedUrl = storageServer.url("/upload").toString();
+        mockServer.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody(buildInitResponse("bid", "uid", "bkey", presignedUrl)));
+        storageServer.enqueue(new MockResponse().setResponseCode(200).addHeader("ETag", "\"etag1\""));
+        enqueueCompleteResponse("{\"status\":\"completed\",\"bundleId\":\"bid\"}");
+    }
+
+    @Test
+    void uploadDirect_ridesOutARestartLongerThanThreeAttempts() throws Exception {
+        for (int i = 0; i < 6; i++) {
+            mockServer.enqueue(new MockResponse().setResponseCode(503).setBody("{\"code\":\"try_again\"}"));
+        }
+        enqueueInitAndRest();
+
+        fastRetryService().uploadDirect(
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null);
+
+        for (int i = 0; i < 7; i++) {
+            assertEquals("/api/v1/project/p1/bundle/upload/init", mockServer.takeRequest().getPath());
+        }
+    }
+
+    @Test
+    void uploadDirect_restartRetriesStopAtTheWindow() {
+        DirectUploadService service = new DirectUploadService(
+                new OkHttpClient(),
+                new DirectUploadService.RetryPolicy(Duration.ofMillis(20), Duration.ofMillis(20), Duration.ofMillis(200)));
+        for (int i = 0; i < 100; i++) {
+            mockServer.enqueue(new MockResponse().setResponseCode(503).setBody("unavailable"));
+        }
+
+        IOException ex = assertThrows(IOException.class, () -> service.uploadDirect(
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null));
+
+        assertTrue(ex.getMessage().contains("503"));
+        assertTrue(mockServer.getRequestCount() > 3, "kept retrying through the window");
+        assertTrue(mockServer.getRequestCount() <= 11, "stopped at the window");
+    }
+
+    @Test
+    void uploadDirect_otherServerErrorsStopAfterThreeAttempts() {
+        for (int i = 0; i < 5; i++) {
+            mockServer.enqueue(new MockResponse().setResponseCode(500).setBody("Internal error"));
+        }
+
+        IOException ex = assertThrows(IOException.class, () -> fastRetryService().uploadDirect(
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null));
+
+        assertTrue(ex.getMessage().contains("500"));
+        assertEquals(3, mockServer.getRequestCount());
+    }
+
+    @Test
+    void uploadDirect_clientErrorIsNotRetried() {
+        mockServer.enqueue(new MockResponse().setResponseCode(403).setBody("{\"error\":\"forbidden\"}"));
+
+        assertThrows(IOException.class, () -> fastRetryService().uploadDirect(
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
+                "test-jwt",
+                null,
+                testBundle,
+                "test.bin",
+                null));
+
+        assertEquals(1, mockServer.getRequestCount());
+    }
+
+    @Test
+    void uploadDirect_retriesARefusedConnectionThroughTheWindow() throws Exception {
+        MockWebServer down = new MockWebServer();
+        down.start();
+        String url = down.url("/api/v1/project/p1/bundle/upload").toString();
+        down.shutdown();
+        DirectUploadService service = new DirectUploadService(
+                new OkHttpClient(),
+                new DirectUploadService.RetryPolicy(Duration.ofMillis(50), Duration.ofMillis(50), Duration.ofMillis(400)));
+
+        long started = System.nanoTime();
+        assertThrows(IOException.class, () -> service.uploadDirect(url, "test-jwt", null, testBundle, "test.bin", null));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        assertTrue(elapsedMs >= 300, "three attempts would wait only 100 ms; waited " + elapsedMs);
+    }
+
+    @Test
+    void restartLikeTransportFailures() {
+        assertTrue(DirectUploadService.isRestartLike(new ConnectException("Connection refused")));
+        assertTrue(DirectUploadService.isRestartLike(new SocketTimeoutException("timeout")));
+        assertTrue(DirectUploadService.isRestartLike(new IOException("unexpected end of stream")));
+        assertFalse(DirectUploadService.isRestartLike(new UnknownHostException("api.example")));
+        assertFalse(DirectUploadService.isRestartLike(new SSLHandshakeException("bad certificate")));
+    }
+
+    @Test
+    void defaultRestartWindowCoversAMinute() {
+        assertEquals(Duration.ofSeconds(60), DirectUploadService.RESTART_POLICY.window());
+        assertEquals(Duration.ofSeconds(1), DirectUploadService.RESTART_POLICY.first());
+    }
 }
