@@ -79,6 +79,9 @@ public class DirectUploadService {
     /** What a gateway or a restarting server answers; every other 5xx is retried only {@link #MAX_RETRIES} times. */
     private static final Set<Integer> RESTART_STATUSES = Set.of(502, 503, 504);
 
+    /** Sub-job statuses that end a step; publishing one of these is retried. */
+    private static final Set<String> TERMINAL_STATUSES = Set.of("COMPLETED", "FAILED", "SKIPPED");
+
     private static final OkHttpClient DEFAULT_CLIENT = new OkHttpClient()
             .newBuilder()
             .writeTimeout(10, TimeUnit.MINUTES)
@@ -263,10 +266,11 @@ public class DirectUploadService {
     }
 
     /**
-     * Publish a sub-job status update to {@code POST /survey/{parentId}/status}. Best-effort:
-     * 404 (endpoint not deployed yet on this daikon) and any network/transport error are
-     * swallowed silently — phase-level progress is informational, not load-bearing. Other
-     * non-2xx responses are logged at WARN level but do not throw.
+     * Publish a sub-job status update to {@code POST /survey/{parentId}/status}. Never throws.
+     * A RUNNING tick is one attempt: 404 (endpoint not deployed yet on this daikon) and any
+     * transport error are swallowed silently, and other non-2xx responses are logged at WARN.
+     * A terminal status (COMPLETED, FAILED, SKIPPED) is retried like an upload call, and on 429
+     * too, for up to {@link RetryPolicy#window()}; if it still fails, that is logged at WARN.
      *
      * <p>Reuse the same {@code idempotencyKey} across all status posts for one logical
      * survey so retries don't re-apply the same transition.
@@ -315,6 +319,10 @@ public class DirectUploadService {
         // Best-effort, but we wait for it: the CLI is short-lived, so a fire-and-forget call
         // could be dropped on exit. Cap the call at 5s so a slow endpoint can't stall the upload.
         OkHttpClient statusClient = client.newBuilder().callTimeout(Duration.ofSeconds(5)).build();
+        if (TERMINAL_STATUSES.contains(status)) {
+            publishTerminalStatus(statusClient, b, url, status);
+            return;
+        }
         try (Response response = statusClient.newCall(b.build()).execute()) {
             if (response.code() == 404) {
                 log.debug("publishStatus: endpoint not deployed on this daikon (404) — silent");
@@ -325,6 +333,24 @@ public class DirectUploadService {
             }
         } catch (IOException e) {
             log.debug("publishStatus: transport error — silent: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * A lost terminal status leaves the sub-job, and so the whole survey, RUNNING for good, so it
+     * gets the upload retries, plus 429. Safe to repeat: it sets the sub-job's status row.
+     */
+    private void publishTerminalStatus(OkHttpClient statusClient, Request.Builder request, String url, String status) {
+        try (Response response = executeWithRetry(statusClient, request::build, "Publish " + status + " status", null, true)) {
+            if (response.code() == 404) {
+                log.debug("publishStatus: endpoint not deployed on this daikon (404), silent");
+                return;
+            }
+            if (!response.isSuccessful()) {
+                log.warn("publishStatus: server returned {} for {}", response.code(), url);
+            }
+        } catch (IOException e) {
+            log.warn("publishStatus: could not publish {} to {}: {}", status, url, e.getMessage());
         }
     }
 
@@ -741,12 +767,18 @@ public class DirectUploadService {
         return executeWithRetry(requestSupplier, operationName, null);
     }
 
+    private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName, Runnable onRetry) throws IOException {
+        return executeWithRetry(client, requestSupplier, operationName, onRetry, false);
+    }
+
     /**
      * Retries a failed call: up to {@link #MAX_RETRIES} attempts for any server error or transport
      * failure, and for as long as {@link RetryPolicy#window()} for the failures a server restart
-     * produces, so an upload survives one. Client errors (4xx) are returned at once.
+     * produces, so an upload survives one. Client errors (4xx) are returned at once, except a 429
+     * when {@code retryTooManyRequests}, which is retried through the window.
      */
-    private Response executeWithRetry(Supplier<Request> requestSupplier, String operationName, Runnable onRetry) throws IOException {
+    private Response executeWithRetry(OkHttpClient httpClient, Supplier<Request> requestSupplier, String operationName,
+                                      Runnable onRetry, boolean retryTooManyRequests) throws IOException {
         IOException lastException = null;
         String lastResponseBody = null;
         int lastCode = 0;
@@ -759,9 +791,10 @@ public class DirectUploadService {
             boolean restartLike;
             Response response = null;
             try {
-                response = client.newCall(requestSupplier.get()).execute();
+                response = httpClient.newCall(requestSupplier.get()).execute();
 
-                if (response.isSuccessful() || (response.code() >= 400 && response.code() < 500)) {
+                boolean tooManyRequests = retryTooManyRequests && response.code() == 429;
+                if (response.isSuccessful() || (response.code() >= 400 && response.code() < 500 && !tooManyRequests)) {
                     return response;
                 }
 
@@ -769,7 +802,7 @@ public class DirectUploadService {
                 lastCode = response.code();
                 lastException = null;
                 response.close();
-                restartLike = RESTART_STATUSES.contains(lastCode);
+                restartLike = RESTART_STATUSES.contains(lastCode) || tooManyRequests;
             } catch (IOException e) {
                 if (response != null) response.close();
                 if (Thread.currentThread().isInterrupted()) {

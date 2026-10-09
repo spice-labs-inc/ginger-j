@@ -231,8 +231,9 @@ public class Ginger implements Callable<Integer> {
    *
    * <p>Best-effort: any configuration problem (missing JWT, missing server claim) or
    * transport error is swallowed at debug level. {@link DirectUploadService#publishStatus}
-   * imposes a 5s call timeout and silently absorbs 404 (endpoint not deployed) so a
-   * progress publish can never stall or fail the surrounding work.
+   * imposes a 5s call timeout per attempt and silently absorbs 404 (endpoint not deployed) so
+   * a progress publish can never fail the surrounding work. A COMPLETED or FAILED publish
+   * retries server errors, 429 and connection failures for up to about a minute.
    */
   public void publishStatus(UUID subJobId, String status, Integer progress, String message) {
     if (parentId == null || subJobId == null || status == null) {

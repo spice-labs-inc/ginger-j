@@ -19,9 +19,15 @@ import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLHandshakeException;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
@@ -503,6 +509,88 @@ class DirectUploadServiceTest {
                 null,
                 null);
         // Reaching this line == no exception thrown.
+    }
+
+    private void publish(DirectUploadService service, String status) {
+        service.publishStatus(
+                mockServer.url("/api/v1/project/p1/bundle/upload").toString(),
+                "jwt",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                status,
+                100,
+                null,
+                UUID.randomUUID(),
+                "spice-labs-cli/test");
+    }
+
+    @Test
+    void publishStatus_completedRetriesAnUnavailableServer() throws Exception {
+        mockServer.enqueue(new MockResponse().setResponseCode(503));
+        mockServer.enqueue(new MockResponse().setResponseCode(204));
+
+        publish(fastRetryService(), "COMPLETED");
+
+        assertEquals(2, mockServer.getRequestCount());
+        for (int i = 0; i < 2; i++) {
+            RecordedRequest req = mockServer.takeRequest();
+            assertEquals("spice-labs-cli/test", req.getHeader("User-Agent"));
+            assertTrue(req.getBody().readUtf8().contains("\"status\":\"COMPLETED\""));
+        }
+    }
+
+    @Test
+    void publishStatus_failedRetriesTooManyRequests() {
+        mockServer.enqueue(new MockResponse().setResponseCode(429));
+        mockServer.enqueue(new MockResponse().setResponseCode(204));
+
+        publish(fastRetryService(), "FAILED");
+
+        assertEquals(2, mockServer.getRequestCount());
+    }
+
+    @Test
+    void publishStatus_completedGivesUpAtTheWindowAndLogs() {
+        DirectUploadService service = new DirectUploadService(
+                new OkHttpClient(),
+                new DirectUploadService.RetryPolicy(Duration.ofMillis(20), Duration.ofMillis(20), Duration.ofMillis(200)));
+        for (int i = 0; i < 100; i++) {
+            mockServer.enqueue(new MockResponse().setResponseCode(503));
+        }
+        Logger logger = (Logger) LoggerFactory.getLogger(DirectUploadService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            publish(service, "COMPLETED");
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertTrue(mockServer.getRequestCount() > 3, "kept retrying through the window");
+        assertTrue(mockServer.getRequestCount() <= 11, "stopped at the window");
+        assertTrue(appender.list.stream().anyMatch(e ->
+                        e.getLevel() == Level.WARN
+                                && e.getFormattedMessage().startsWith("publishStatus: could not publish COMPLETED")),
+                "the give-up is logged at WARN");
+    }
+
+    @Test
+    void publishStatus_clientErrorIsNotRetried() {
+        mockServer.enqueue(new MockResponse().setResponseCode(400));
+
+        publish(fastRetryService(), "COMPLETED");
+
+        assertEquals(1, mockServer.getRequestCount());
+    }
+
+    @Test
+    void publishStatus_runningTickIsOneAttempt() {
+        mockServer.enqueue(new MockResponse().setResponseCode(503));
+
+        publish(fastRetryService(), "RUNNING");
+
+        assertEquals(1, mockServer.getRequestCount());
     }
 
     @Test
