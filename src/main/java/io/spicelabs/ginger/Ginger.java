@@ -647,11 +647,14 @@ public class Ginger implements Callable<Integer> {
         .readTimeout(60, TimeUnit.SECONDS)
         .build();
 
-    okhttp3.Request request = new okhttp3.Request.Builder()
+    okhttp3.Request.Builder requestBuilder = new okhttp3.Request.Builder()
         .url(url)
         .addHeader("Authorization", "Bearer " + token)
-        .get()
-        .build();
+        .get();
+    if (userAgent != null && !userAgent.isEmpty()) {
+      requestBuilder.addHeader("User-Agent", userAgent);
+    }
+    okhttp3.Request request = requestBuilder.build();
 
     try (okhttp3.Response response = client.newCall(request).execute()) {
       if (!response.isSuccessful()) {

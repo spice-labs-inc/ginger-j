@@ -369,7 +369,8 @@ public class DirectUploadService {
         log.info("Initialized multipart upload: {} parts, bundleId={}, jobId={}",
                 initResponse.parts().size(), initResponse.bundleId(), jobId);
 
-        List<CompletedPart> completedParts = uploadParts(bundle, initResponse.parts(), baseUrl, jwt, jobId);
+        List<CompletedPart> completedParts = uploadParts(bundle, initResponse.parts(), baseUrl, jwt, jobId,
+                options.userAgent());
 
         CompleteResponse completeResponse = completeUpload(
                 baseUrl, jwt, jobId, initResponse.uploadId(), initResponse.blobKey(), sha256, completedParts,
@@ -444,7 +445,8 @@ public class DirectUploadService {
         }
     }
 
-    private List<CompletedPart> uploadParts(File bundle, List<PartInfo> parts, String baseUrl, String jwt, String jobId) throws IOException {
+    private List<CompletedPart> uploadParts(File bundle, List<PartInfo> parts, String baseUrl, String jwt, String jobId,
+                                            String userAgent) throws IOException {
         long totalSize = bundle.length();
         log.info("Uploading {} to Spice Labs Secure Project Storage...", formatBytes(totalSize));
 
@@ -465,7 +467,7 @@ public class DirectUploadService {
                 try {
                     String etag = uploadPart(bundle, part, totalSize, totalBytesUploaded,
                             startTime, lastProgressTime, lastProgressBytes, lastDotStep, lastLogStep,
-                            lastServerReportStep, baseUrl, jwt, jobId);
+                            lastServerReportStep, baseUrl, jwt, jobId, userAgent);
                     etags.put(part.partNumber(), etag);
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to upload part " + part.partNumber(), e);
@@ -516,7 +518,8 @@ public class DirectUploadService {
             AtomicLong lastServerReportStep,
             String baseUrl,
             String jwt,
-            String jobId
+            String jobId,
+            String userAgent
     ) throws IOException {
         long progressIntervalBytes = Math.max(totalSize / 50, 8192); // 2% of total, min 8KB
         AtomicLong attemptBytesUploaded = new AtomicLong(0);
@@ -557,14 +560,14 @@ public class DirectUploadService {
                             attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
                             bytesSinceLastUpdate = 0;
                             reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes,
-                                    lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId);
+                                    lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId, userAgent);
                         }
                     }
                     if (bytesSinceLastUpdate > 0) {
                         long uploaded = totalBytesUploaded.addAndGet(bytesSinceLastUpdate);
                         attemptBytesUploaded.addAndGet(bytesSinceLastUpdate);
                         reportProgress(uploaded, totalSize, startTime, lastProgressTime, lastProgressBytes,
-                                lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId);
+                                lastDotStep, lastLogStep, lastServerReportStep, baseUrl, jwt, jobId, userAgent);
                     }
                 }
             }
@@ -613,7 +616,8 @@ public class DirectUploadService {
             AtomicLong lastServerReportStep,
             String baseUrl,
             String jwt,
-            String jobId
+            String jobId,
+            String userAgent
     ) {
         int percent = (int) ((bytesUploaded * 100) / totalSize);
         int dotStep = percent / 2;  // every 2%
@@ -651,7 +655,7 @@ public class DirectUploadService {
         int serverStep = percent / 2; // every 2%, aligned with CLI dots
         long prevServerStep = lastServerReportStep.get();
         if (serverStep > prevServerStep && lastServerReportStep.compareAndSet(prevServerStep, serverStep)) {
-            reportProgressToServer(baseUrl, jwt, jobId, serverStep * 2);
+            reportProgressToServer(baseUrl, jwt, jobId, serverStep * 2, userAgent);
         }
     }
 
@@ -695,20 +699,22 @@ public class DirectUploadService {
         }
     }
 
-    private void reportProgressToServer(String baseUrl, String jwt, String jobId, int progress) {
+    private void reportProgressToServer(String baseUrl, String jwt, String jobId, int progress, String userAgent) {
         if (jobId == null || jobId.isEmpty()) return;
         Thread.startVirtualThread(() -> {
             try {
                 String url = normalizeUrl(baseUrl) + "/progress";
                 String jsonBody = MAPPER.writeValueAsString(
                         Map.of("jobId", jobId, "progress", progress));
-                Request request = new Request.Builder()
+                Request.Builder b = new Request.Builder()
                         .url(url)
                         .addHeader("Authorization", "Bearer " + jwt)
                         .addHeader("Content-Type", "application/json")
-                        .put(RequestBody.create(jsonBody, JSON))
-                        .build();
-                try (Response response = client.newCall(request).execute()) {
+                        .put(RequestBody.create(jsonBody, JSON));
+                if (userAgent != null && !userAgent.isEmpty()) {
+                    b.addHeader("User-Agent", userAgent);
+                }
+                try (Response response = client.newCall(b.build()).execute()) {
                     if (!response.isSuccessful()) {
                         log.debug("Progress report failed: {} {}", response.code(),
                                 response.body() != null ? response.body().string() : "");
