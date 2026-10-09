@@ -72,11 +72,16 @@ jobs:
           echo "${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}" | gpg --batch --import
 
       - name: Update version locally in pom.xml
-        run: mvn -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
+        run: ./mvnw -B versions:set -DnewVersion="${{ steps.tag.outputs.version }}" -DgenerateBackupPoms=false
 
+      # Maven comes from the wrapper (mvnw, .mvn/wrapper), pinned to 3.9.15, not from the runner image.
+      # Maven 3.10 (ubuntu-24.04 since 2026-10-04) writes local-repository bookkeeping
+      # (maven-metadata-local.xml, _remote.repositories) into central-publishing's staging
+      # directory, the plugin bundles it, and Central rejects the deployment: "Bundle has
+      # content that does NOT have a .pom file". spice-probe lost three versions to it.
       - name: Publish to Maven Central
         run: |
-          mvn --batch-mode deploy -P maven-central \
+          ./mvnw --batch-mode deploy -P maven-central \
             -Dcentral.autoPublish=${{ steps.tag.outputs.auto_publish }}
         env:
           GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
@@ -88,7 +93,7 @@ jobs:
           distribution: "temurin"
 
       - name: Publish to GitHub Packages
-        run: mvn --batch-mode deploy -P github
+        run: ./mvnw --batch-mode deploy -P github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
