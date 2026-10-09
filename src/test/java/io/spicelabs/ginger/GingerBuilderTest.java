@@ -10,10 +10,15 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
+
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -291,4 +296,23 @@ class GingerBuilderTest {
   }
 
 
+  @Test
+  void downloadRuntimeConfig_sendsTheUserAgent() throws Exception {
+    try (MockWebServer server = new MockWebServer()) {
+      server.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
+      server.start();
+      String body = "{\"exp\":" + (Instant.now().getEpochSecond() + 3600)
+          + ",\"x-upload-server\":\"" + server.url("/api/v1/project/p/bundle/upload") + "\"}";
+      String jwt = Base64.getUrlEncoder().withoutPadding().encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8))
+          + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(body.getBytes(StandardCharsets.UTF_8)) + ".";
+
+      byte[] config = Ginger.builder().jwt(jwt).userAgent("spice-labs-cli/1.2.3 (command survey runtime)")
+          .downloadRuntimeConfigBytes();
+
+      assertArrayEquals("{}".getBytes(StandardCharsets.UTF_8), config);
+      RecordedRequest req = server.takeRequest(1, TimeUnit.SECONDS);
+      assertEquals("/api/v1/project/p/bundle/upload/runtime-config", req.getPath());
+      assertEquals("spice-labs-cli/1.2.3 (command survey runtime)", req.getHeader("User-Agent"));
+    }
+  }
 }

@@ -537,16 +537,20 @@ class DirectUploadServiceTest {
 
         boolean initUA = false;
         boolean completeUA = false;
+        boolean progressUA = false;
         RecordedRequest req;
         while ((req = mockServer.takeRequest(1, TimeUnit.SECONDS)) != null) {
             if (req.getPath().endsWith("/init")) {
                 initUA = "spice-labs-cli/1.2.3".equals(req.getHeader("User-Agent"));
             } else if (req.getPath().endsWith("/complete")) {
                 completeUA = "spice-labs-cli/1.2.3".equals(req.getHeader("User-Agent"));
+            } else if (req.getPath().endsWith("/progress")) {
+                progressUA = "spice-labs-cli/1.2.3".equals(req.getHeader("User-Agent"));
             }
         }
         assertTrue(initUA, "init request should carry User-Agent");
         assertTrue(completeUA, "complete request should carry User-Agent");
+        assertTrue(progressUA, "progress request should carry User-Agent");
     }
 
     private static final DirectUploadService.RetryPolicy FAST_RESTART =
